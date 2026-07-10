@@ -59,12 +59,15 @@ Python 路径：`/Users/zheyuan.wu/miniconda3/envs/nanoharness/bin/python`
 | `engine/hooks/defaults.py` | ✅ | 默认空实现 + safe_call() |
 | `tests/unit/test_core.py` | ✅ | 4 个行为指纹测试，全部通过 |
 
-### Phase 2 ⬜ 待开发（路由 + TurnRunner）
+### Phase 2 ✅ 已完成（路由 + TurnRunner）
 
-- `engine/turn_runner.py` — per-session asyncio.Lock + ContextVar 重入检测
-- `router/tiers.py` — T0/T1/T2/T3 模型档位定义
-- `router/llm_router.py` — LLM-based 难度分类器（用一次 T0 级别的 LLM call 打标签）
-- `router/decision_log.py` — 路由决策持久化 SQLite
+| 文件 | 状态 | 说明 |
+|------|------|------|
+| `router/tiers.py` | ✅ | T0~T3 档位、TierConfig、PromptPolicy、TierRegistry（运行时覆盖） |
+| `router/llm_router.py` | ✅ | 一次 T0 LLM call 分类，降级链（LLM→超时→规则→fallback），JSON 容错 |
+| `router/decision_log.py` | ✅ | 路由决策 SQLite 持久化 + cost_savings_report() |
+| `engine/turn_runner.py` | ✅ | per-session Lock 串行化 + ContextVar 重入检测 + Hook 触发 |
+| `tests/unit/test_router.py` | ✅ | 16 个测试，含串并行验证、超时降级、成本报告 |
 
 ### Phase 3 ⬜ 记忆系统
 
