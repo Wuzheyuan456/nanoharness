@@ -69,11 +69,16 @@ Python 路径：`/Users/zheyuan.wu/miniconda3/envs/nanoharness/bin/python`
 | `engine/turn_runner.py` | ✅ | per-session Lock 串行化 + ContextVar 重入检测 + Hook 触发 |
 | `tests/unit/test_router.py` | ✅ | 16 个测试，含串并行验证、超时降级、成本报告 |
 
-### Phase 3 ⬜ 记忆系统
+### Phase 3 ✅ 已完成（三层记忆系统）
 
-- `memory/store.py` — SQLite + sqlite-vec 存储层
-- `memory/retrieval.py` — BM25 + 向量检索 + RRF 重排
-- `memory/compaction_hooks.py` / `consolidation.py` / `manager.py`
+| 文件 | 状态 | 说明 |
+|------|------|------|
+| `memory/store.py` | ✅ | SQLite + FTS5 trigram 全文索引，L2 sessions + L3 memories 双表 |
+| `memory/retrieval.py` | ✅ | BM25×0.3 + 时间衰减×0.3 + importance×0.4 三路融合排序 |
+| `memory/compaction_hooks.py` | ✅ | 压缩前保护 tool_result 和长消息写入 L3 |
+| `memory/consolidation.py` | ✅ | Dream 机制：session 结束后异步 LLM 提炼摘要+事实 |
+| `memory/manager.py` | ✅ | Facade 门面：prefetch / on_compact / flush 三个方法 |
+| `tests/unit/test_memory.py` | ✅ | 33 个测试，全部通过 |
 
 ### Phase 4~7 ⬜ 多 Agent / 通道 / 可观测性 / 测试完善
 
