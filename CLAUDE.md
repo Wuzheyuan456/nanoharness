@@ -80,7 +80,36 @@ Python 路径：`/Users/zheyuan.wu/miniconda3/envs/nanoharness/bin/python`
 | `memory/manager.py` | ✅ | Facade 门面：prefetch / on_compact / flush 三个方法 |
 | `tests/unit/test_memory.py` | ✅ | 33 个测试，全部通过 |
 
-### Phase 4~7 ⬜ 多 Agent / 通道 / 可观测性 / 测试完善
+### Phase 4 ✅ 已完成（多 Agent 编排）
+
+| 文件 | 状态 | 说明 |
+|------|------|------|
+| `agents/registry.py` | ✅ | AgentCard + AgentRegistry，能力标签路由，对齐 A2A 协议 |
+| `agents/orchestrator.py` | ✅ | Supervisor 模式：拆解/路由/并行/综合，ContextVar 深度保护 |
+| `agents/debate.py` | ✅ | 辩论模式：并行 Reviewer → Judge，独立 session 视角 |
+| `tests/unit/test_agents.py` | ✅ | 28 个测试，全部通过 |
+
+### Phase 5 ✅ 已完成（行为指纹测试框架）
+
+| 文件 | 状态 | 说明 |
+|------|------|------|
+| `tests/behavioral/fingerprint.py` | ✅ | BehaviorFingerprint（called/executed 区分）+ BehaviorConstraint |
+| `tests/behavioral/test_intent_routing.py` | ✅ | 8 个测试：LLMRouter 分类、降级、启发式、行为约束 |
+| `tests/behavioral/test_safety.py` | ✅ | 8 个测试：未注册工具拦截、约束违规检测、prompt 注入 |
+
+### Phase 6 ✅ 已完成（多通道消息网关）
+
+| 文件 | 状态 | 说明 |
+|------|------|------|
+| `channels/base.py` | ✅ | InboundEnvelope/OutboundEnvelope 信封 + BaseChannel Protocol |
+| `channels/lane_queue.py` | ✅ | 车道隔离：per-session 串行、跨 session 并行、ContextVar 重入检测 |
+| `channels/router.py` | ✅ | BindingRule 声明式路由 + make_session_key（DM/群聊隔离） |
+| `channels/gateway.py` | ✅ | Gateway 流水线：去重→安全→路由→车道分发，SafetyPolicy |
+| `channels/telegram.py` | ✅ | aiogram 适配器，parse_message + 4096 分块发送 |
+| `channels/discord.py` | ✅ | discord.py 适配器，parse_message + 2000 分块发送 |
+| `tests/unit/test_channels.py` | ✅ | 29 个测试，全部通过 |
+
+### Phase 7 ⬜ 压测 + 量化数据收集 + Gradio 面板打磨
 
 ---
 
