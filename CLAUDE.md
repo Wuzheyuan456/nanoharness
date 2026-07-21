@@ -109,7 +109,18 @@ Python 路径：`/Users/zheyuan.wu/miniconda3/envs/nanoharness/bin/python`
 | `channels/discord.py` | ✅ | discord.py 适配器，parse_message + 2000 分块发送 |
 | `tests/unit/test_channels.py` | ✅ | 29 个测试，全部通过 |
 
-### Phase 7 ⬜ 压测 + 量化数据收集 + Gradio 面板打磨
+### Phase 7 ✅ 已完成（可观测性 + 量化数据 + 压测）
+
+| 文件 | 状态 | 说明 |
+|------|------|------|
+| `observability/tracing.py` | ✅ | 轻量 OTel：Span 树 + ContextVar 父子继承 + build_tree 回放 |
+| `observability/metrics.py` | ✅ | 四大黄金信号，自实现 Counter/Histogram/Gauge，render_prometheus |
+| `observability/dashboard.py` | ✅ | Gradio 三 Tab：路由决策/链路回放/黄金信号 |
+| `scripts/benchmark_router.py` | ✅ | LLMRouter 准确率 + cost 节省%，支持 mock/真实切换 |
+| `scripts/benchmark_compaction.py` | ✅ | 压缩前后 token 对比，mock 模式降本 93.8% |
+| `scripts/load_test_gateway.py` | ✅ | Gateway 50 并发压测 P50/P95/P99 + 车道隔离验证 |
+| `tests/unit/test_observability.py` | ✅ | 14 个测试，全部通过 |
+| `README.md` | ✅ | 架构图 + 启动 + 设计决策 + 量化数据 |
 
 ---
 
