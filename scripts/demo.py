@@ -1,7 +1,7 @@
 """
-演示脚本：往可观测性三件套灌真实数据，启动 Gradio 面板。
+演示脚本：往可观测性三件套灌真实数据，启动 Gradio 面板 / Demo script: seed real data into observability trio and launch Gradio dashboard.
 
-无需 API key，用 mock 数据填充三个 Tab：
+无需 API key，用 mock 数据填充三个 Tab / No API key needed, fill three tabs with mock data:
   - 路由决策：模拟 20 条不同 tier 的路由决策
   - 链路回放：模拟 3 条完整 turn 的 Span 树
   - 黄金信号：模拟延迟/token/错误率/饱和度指标
@@ -26,12 +26,12 @@ from nanoharness.router.decision_log import DecisionLog, RouterDecision
 from nanoharness.router.tiers import Tier
 
 
-# ─── 1. 灌路由决策 ─────────────────────────────────────────────────────────────
+# ─── 1. 灌路由决策 / 1. Seed Router Decisions ────────────────────────────────
 
 def seed_router_decisions(db_path: str = "router_decisions.db") -> None:
-    """模拟 20 条路由决策，覆盖 T0~T3 各档位。"""
+    """模拟 20 条路由决策，覆盖 T0~T3 各档位 / Simulate 20 routing decisions covering T0~T3 tiers."""
     db = DecisionLog(db_path)
-    # 清空旧数据重新灌（演示用）
+    # 清空旧数据重新灌（演示用）/ Clear old data and re-seed (for demo)
     db._conn.execute("DELETE FROM router_decisions")
     db._conn.commit()
 
@@ -67,10 +67,10 @@ def seed_router_decisions(db_path: str = "router_decisions.db") -> None:
     print(f"✓ 灌入 {len(samples)} 条路由决策")
 
 
-# ─── 2. 灌 Span 链路 ──────────────────────────────────────────────────────────
+# ─── 2. 灌 Span 链路 / 2. Seed Span Traces ────────────────────────────────────
 
 def seed_traces() -> None:
-    """模拟 3 条完整 turn 的 Span 树（turn → 路由 → 工具调用 → 完成）。"""
+    """模拟 3 条完整 turn 的 Span 树（turn → 路由 → 工具调用 → 完成）/ Simulate 3 complete turn Span trees (turn → routing → tool call → done)."""
     tracer = get_tracer()
     tracer.clear()
 
@@ -88,30 +88,30 @@ def seed_traces() -> None:
             for child_name, dur_ms in children:
                 with tracer.start_span(child_name) as child:
                     child.set_attr("duration_ms", dur_ms)
-                    time.sleep(0.001)   # 让 end_ts 有差异
+                    time.sleep(0.001)   # 让 end_ts 有差异 / give end_ts some difference
     print(f"✓ 灌入 {len(scenarios)} 条 Span 链路")
 
 
-# ─── 3. 灌黄金信号指标 ────────────────────────────────────────────────────────
+# ─── 3. 灌黄金信号指标 / 3. Seed Golden-Signal Metrics ───────────────────────
 
 def seed_metrics() -> None:
-    """模拟延迟分布、token 用量、错误率、context 利用率。"""
+    """模拟延迟分布、token 用量、错误率、context 利用率 / Simulate latency distribution, token usage, error rate, and context utilization."""
     import random
     random.seed(42)
     m = get_metrics()
 
-    # 延迟：模拟 50 次 turn，多数快、少数长尾
+    # 延迟：模拟 50 次 turn，多数快、少数长尾 / Latency: simulate 50 turns, mostly fast with a few long-tail
     for _ in range(40):
         m.observe_latency(random.uniform(0.05, 0.3), kind="turn", model="haiku")
     for _ in range(8):
         m.observe_latency(random.uniform(0.4, 0.9), kind="turn", model="sonnet-5")
     for _ in range(2):
-        m.observe_latency(random.uniform(1.5, 2.8), kind="turn", model="opus-4-8")  # 长尾
-    # 路由分类延迟
+        m.observe_latency(random.uniform(1.5, 2.8), kind="turn", model="opus-4-8")  # 长尾 / long tail
+    # 路由分类延迟 / Routing classification latency
     for _ in range(50):
         m.observe_latency(random.uniform(0.15, 0.25), kind="router", model="haiku")
 
-    # token 用量
+    # token 用量 / Token usage
     for _ in range(30):
         m.inc_tokens(random.randint(50, 200), model="haiku", token_type="input")
         m.inc_tokens(random.randint(100, 400), model="haiku", token_type="output")
@@ -121,18 +121,18 @@ def seed_metrics() -> None:
     for _ in range(2):
         m.inc_tokens(random.randint(2000, 4000), model="opus-4-8", token_type="input")
 
-    # 工具调用
+    # 工具调用 / Tool calls
     for _ in range(15):
         m.inc_tool_call("search", success=True)
     m.inc_tool_call("search", success=False)
     for _ in range(6):
         m.inc_tool_call("calculator", success=True)
 
-    # 错误
+    # 错误 / Errors
     m.inc_error("timeout")
     m.inc_error("rate_limited")
 
-    # context 利用率（4 个 session）
+    # context 利用率（4 个 session）/ Context utilization (4 sessions)
     m.observe_context_utilization(0.32, session_key="demo-T0")
     m.observe_context_utilization(0.58, session_key="demo-T1")
     m.observe_context_utilization(0.81, session_key="demo-T2")

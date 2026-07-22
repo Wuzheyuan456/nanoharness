@@ -10,7 +10,7 @@ from nanoharness.memory.store import MemoryEntry, MemoryStore, MemoryType, Sessi
 
 log = logging.getLogger(__name__)
 
-# LLM 提炼 session 摘要用的 prompt
+# LLM 提炼 session 摘要用的 prompt / prompt for LLM to distill session summary
 _CONSOLIDATION_SYSTEM = """\
 你是一个记忆整理助手。请从以下对话中提取：
 1. 一段简洁的会话摘要（2~4句话，描述做了什么、得出了什么结论）
@@ -30,15 +30,15 @@ _CONSOLIDATION_SYSTEM = """\
 
 class SessionConsolidator:
     """
-    会话结束后异步触发的记忆巩固（简化版 Dream 机制）。
+    会话结束后异步触发的记忆巩固（简化版 Dream 机制）。 / Async memory consolidation triggered after a session ends (simplified Dream mechanism).
 
-    流程：
-    1. 用 LLM（建议 Haiku，成本低）提炼整个 session 的摘要和关键事实
-    2. 摘要写入 L2（sessions 表）
-    3. 事实/偏好写入 L3（memories 表）
-    4. 全程异步后台运行，不阻塞用户响应
+    流程： / Flow:
+    1. 用 LLM（建议 Haiku，成本低）提炼整个 session 的摘要和关键事实 / 1. Use LLM (Haiku recommended, low cost) to distill the whole session's summary and key facts
+    2. 摘要写入 L2（sessions 表） / 2. Write summary into L2 (sessions table)
+    3. 事实/偏好写入 L3（memories 表） / 3. Write facts/preferences into L3 (memories table)
+    4. 全程异步后台运行，不阻塞用户响应 / 4. Runs fully async in the background, never blocks user responses
 
-    面试话术：
+    面试话术 / Interview talking point:
     "Dream 机制来自神经科学——大脑在睡眠时巩固白天的记忆。
     我的简化版是 session 结束后异步触发一次 LLM call，
     把对话提炼成结构化摘要写入 SQLite。
@@ -49,8 +49,8 @@ class SessionConsolidator:
     def __init__(
         self,
         store: MemoryStore,
-        provider: Any,                   # LLMProvider，建议用 Haiku
-        max_history_chars: int = 6000,   # 传给 LLM 的对话上限（防超长）
+        provider: Any,                   # LLMProvider，建议用 Haiku / LLMProvider, Haiku recommended
+        max_history_chars: int = 6000,   # 传给 LLM 的对话上限（防超长） / conversation char cap sent to LLM (guard against overflow)
     ) -> None:
         self._store = store
         self._provider = provider
@@ -58,13 +58,13 @@ class SessionConsolidator:
 
     async def consolidate(self, ctx: AgentContext, started_at: float) -> None:
         """
-        同步入口（内部用 asyncio.create_task 转为后台）。
-        由 MemoryManager.flush() 调用。
+        同步入口（内部用 asyncio.create_task 转为后台）。 / Sync entry (internally spawned to background via asyncio.create_task).
+        由 MemoryManager.flush() 调用。 / Called by MemoryManager.flush().
         """
         asyncio.create_task(self._run(ctx, started_at))
 
     async def consolidate_and_wait(self, ctx: AgentContext, started_at: float) -> None:
-        """同步等待版本，用于测试或需要确认写入完成的场景。"""
+        """同步等待版本，用于测试或需要确认写入完成的场景。 / Sync-await version, for tests or when write completion must be confirmed."""
         await self._run(ctx, started_at)
 
     async def _run(self, ctx: AgentContext, started_at: float) -> None:
@@ -76,13 +76,13 @@ class SessionConsolidator:
             result = await self._llm_consolidate(history_text, ctx.system_prompt)
         except Exception as exc:
             log.warning("记忆巩固 LLM 调用失败，跳过: %s", exc)
-            # 降级：直接存截断的对话作为摘要
+            # 降级：直接存截断的对话作为摘要 / fallback: store truncated conversation as summary
             result = {
                 "summary": history_text[:300] + "...",
                 "facts": [],
             }
 
-        # 写入 L2：会话摘要
+        # 写入 L2：会话摘要 / write L2: session summary
         self._store.upsert_session(SessionRecord(
             session_key=ctx.session_key,
             agent_id=ctx.agent_id,
@@ -91,7 +91,7 @@ class SessionConsolidator:
             ended_at=time.time(),
         ))
 
-        # 写入 L3：事实和偏好
+        # 写入 L3：事实和偏好 / write L3: facts and preferences
         for item in result.get("facts", []):
             content = item.get("content", "").strip()
             if not content:
@@ -124,7 +124,7 @@ class SessionConsolidator:
         )
         text = resp.final_text.strip()
 
-        # 容错解析（和 LLMRouter 保持一致的策略）
+        # 容错解析（和 LLMRouter 保持一致的策略） / fault-tolerant parsing (same strategy as LLMRouter)
         try:
             return json.loads(text)
         except json.JSONDecodeError:
@@ -138,7 +138,7 @@ class SessionConsolidator:
         return {"summary": text[:300], "facts": []}
 
     def _format_history(self, messages: list[Message]) -> str:
-        """把对话历史转成文字，截断到 max_history_chars。"""
+        """把对话历史转成文字，截断到 max_history_chars。 / Convert conversation history to text, truncated to max_history_chars."""
         import json
         lines: list[str] = []
         total = 0

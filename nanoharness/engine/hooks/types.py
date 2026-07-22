@@ -6,7 +6,7 @@ from typing import Any, Protocol, runtime_checkable
 from nanoharness.core.event_store import AgentEvent
 
 
-# ─── Hook Contexts ────────────────────────────────────────────────────────────
+# ─── Hook 上下文 / Hook Contexts ────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
 class TurnHookContext:
@@ -61,10 +61,10 @@ class CompactionHookResult:
     messages_after: int
 
 
-# ─── Hook Protocols ───────────────────────────────────────────────────────────
-# All hook methods are optional (return None).
-# Exceptions thrown by hooks are caught and logged (WARN); they never
-# propagate to the main turn flow.
+# ─── Hook 协议 / Hook Protocols ───────────────────────────────────────────────────────────
+# 所有 hook 方法都是可选的（返回 None） / All hook methods are optional (return None).
+# hook 抛出的异常会被捕获并记录为 WARN，绝不 / Exceptions thrown by hooks are caught and logged (WARN); they never
+# 传播到主 turn 流程 / propagate to the main turn flow.
 
 @runtime_checkable
 class TurnHook(Protocol):

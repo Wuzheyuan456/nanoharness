@@ -11,9 +11,9 @@ from typing import Any, Callable
 
 log = logging.getLogger(__name__)
 
-# ─── Tool Registry ────────────────────────────────────────────────────────────
+# ─── 工具注册表 / Tool Registry ────────────────────────────────────────────────
 
-ToolCallable = Callable[[dict[str, Any], Any], Any]  # (input, ToolContext) -> Any
+ToolCallable = Callable[[dict[str, Any], Any], Any]  # （输入，ToolContext）-> Any / (input, ToolContext) -> Any
 
 
 @dataclass
@@ -33,8 +33,8 @@ class ToolDefinition:
 
 class ToolRegistry:
     """
-    Simple name → ToolDefinition map.
-    Used by NanoCore to build tool_definitions and route calls.
+    简单的 名称 → ToolDefinition 映射 / Simple name → ToolDefinition map.
+    被 NanoCore 用来构建 tool_definitions 并路由调用 / Used by NanoCore to build tool_definitions and route calls.
     """
 
     def __init__(self) -> None:
@@ -54,26 +54,25 @@ class ToolRegistry:
         return [t.to_api_dict() for t in self._tools.values()]
 
 
-# ─── Retry Config ─────────────────────────────────────────────────────────────
+# ─── 重试配置 / Retry Config ─────────────────────────────────────────────────────
 
 @dataclass
 class RetryConfig:
     max_attempts: int = 3
-    base_delay: float = 0.5     # seconds
+    base_delay: float = 0.5     # 秒 / seconds
     max_delay: float = 30.0
-    jitter: float = 0.25        # ±jitter fraction of sleep time
+    jitter: float = 0.25        # 休眠时间的 ±jitter 比例 / ±jitter fraction of sleep time
 
 
-# ─── Dead-loop Detector ───────────────────────────────────────────────────────
+# ─── 死循环检测器 / Dead-loop Detector ───────────────────────────────────────
 
 class DeadLoopDetector:
     """
-    Detects repeated identical tool calls within a turn.
+    检测一轮内重复的相同工具调用 / Detects repeated identical tool calls within a turn.
 
-    If the same (tool_name, input_hash) pair appears ≥ threshold times
-    consecutively, raise to force the model to stop looping.
+    若同一 (tool_name, input_hash) 配对连续出现 ≥ threshold 次，则抛错强制模型停止循环 / If the same (tool_name, input_hash) pair appears ≥ threshold times consecutively, raise to force the model to stop looping.
 
-    Interview talking point:
+    面试话术 / Interview talking point:
     "A common failure mode is the model calling the same tool in a loop when
     it doesn't understand the result. I fingerprint calls by tool+input hash
     and abort after N consecutive repeats."
@@ -102,17 +101,16 @@ class DeadLoopError(RuntimeError):
     pass
 
 
-# ─── Tool Executor ────────────────────────────────────────────────────────────
+# ─── 工具执行器 / Tool Executor ────────────────────────────────────────────────
 
 class ToolExecutor:
     """
-    Executes tool calls with:
-      - per-call timeout (asyncio.wait_for)
-      - exponential backoff with jitter on transient errors
-      - dead-loop detection (same call repeated N times → abort)
+    执行工具调用，特性如下 / Executes tool calls with:
+      - 单次调用超时（asyncio.wait_for）/ per-call timeout (asyncio.wait_for)
+      - 瞬时错误上的指数退避加抖动 / exponential backoff with jitter on transient errors
+      - 死循环检测（同一调用重复 N 次 → 终止）/ dead-loop detection (same call repeated N times → abort)
 
-    Designed to be stateless between turns — callers create a fresh instance
-    per turn and pass the same ToolRegistry.
+    设计为 turn 间无状态 — 调用方每轮新建实例并传入同一个 ToolRegistry / Designed to be stateless between turns — callers create a fresh instance per turn and pass the same ToolRegistry.
     """
 
     def __init__(
@@ -134,8 +132,8 @@ class ToolExecutor:
         tool_context: Any,
     ) -> tuple[bool, str]:
         """
-        Returns (success, output_str).
-        Raises DeadLoopError if the same call repeats too many times.
+        返回 (success, output_str) / Returns (success, output_str).
+        若同一调用重复过多则抛出 DeadLoopError / Raises DeadLoopError if the same call repeats too many times.
         """
         fn = self._registry.get_fn(tool_name)
         if fn is None:

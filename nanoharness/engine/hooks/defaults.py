@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 
 class DefaultTurnHook:
-    """No-op TurnHook. Used as fallback when no custom hook is registered."""
+    """空操作 TurnHook，作为未注册自定义 hook 时的回退 / No-op TurnHook. Used as fallback when no custom hook is registered."""
 
     async def before_turn(self, ctx: TurnHookContext) -> None:
         pass
@@ -32,7 +32,7 @@ class DefaultTurnHook:
 
 
 class DefaultToolHook:
-    """No-op ToolHook."""
+    """空操作 ToolHook / No-op ToolHook."""
 
     async def before_tool(self, ctx: ToolHookContext) -> None:
         pass
@@ -42,7 +42,7 @@ class DefaultToolHook:
 
 
 class DefaultCompactionHook:
-    """No-op CompactionHook."""
+    """空操作 CompactionHook / No-op CompactionHook."""
 
     async def before_compact(self, ctx: CompactionHookContext) -> None:
         pass
@@ -55,12 +55,12 @@ class DefaultCompactionHook:
         pass
 
 
-# ─── Safe Hook Caller ─────────────────────────────────────────────────────────
+# ─── 安全 Hook 调用器 / Safe Hook Caller ─────────────────────────────────────────────────────────
 
 async def safe_call(coro_or_none: object) -> None:
     """
-    Await a hook coroutine, swallowing any exception.
-    Hooks must never crash the main turn flow.
+    等待一个 hook 协程，吞掉所有异常 / Await a hook coroutine, swallowing any exception.
+    hook 绝不能让主 turn 流程崩溃 / Hooks must never crash the main turn flow.
     """
     import asyncio
     if coro_or_none is None:

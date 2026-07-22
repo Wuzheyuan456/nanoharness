@@ -150,7 +150,7 @@ provider 的 `stream()` 同理，不要加 `await`。
 
 ## 代码规范
 
-- 语言：注释、commit message、文档全部用**中文**
+- 语言：注释和 docstring 用**中英双语**（格式 `# 中文 / English`，中文在前英文括注）；commit message、文档正文用中文
 - 格式：`ruff` 检查，line-length=100，target Python 3.12
 - 类型：启用 `from __future__ import annotations`，Protocol 优先于 ABC
 - 不加多余注释：只注释"为什么"，不注释"是什么"

@@ -1,12 +1,12 @@
 """
-意图路由行为测试。
+意图路由行为测试 / Intent routing behavioral tests.
 
 行为测试的视角：不关心路由器输出了什么文字理由，
 只关心：
   1. 给定输入消息，分类出的 tier 是否符合预期
   2. 被路由到的 Agent 执行后，行为指纹是否满足约束
 
-全部使用 Mock Provider，不依赖真实 LLM。
+全部使用 Mock Provider，不依赖真实 LLM / All use Mock Provider, no real LLM.
 """
 from __future__ import annotations
 
@@ -25,10 +25,10 @@ from tests.behavioral.fingerprint import (
 )
 
 
-# ─── Fixtures ─────────────────────────────────────────────────────────────────
+# ─── 测试夹具 / Fixtures ─────────────────────────────────────────────────────
 
 def make_classify_provider(tier: str, confidence: float = 0.9) -> MagicMock:
-    """返回一个 mock provider，complete() 返回指定 tier 的 JSON。"""
+    """返回一个 mock provider，complete() 返回指定 tier 的 JSON / Return a mock provider whose complete() returns JSON for the given tier."""
     provider = MagicMock()
     provider.model_id = "test-classify-model"
     provider.complete = AsyncMock(return_value=MagicMock(
@@ -38,7 +38,7 @@ def make_classify_provider(tier: str, confidence: float = 0.9) -> MagicMock:
 
 
 def make_text_provider(*chunks: str) -> MagicMock:
-    """返回一个流式文本 mock provider（无工具调用）。"""
+    """返回一个流式文本 mock provider（无工具调用） / Return a streaming-text mock provider (no tool calls)."""
     final_text = "".join(chunks)
     final_response = LLMResponse(
         raw_content=[{"type": "text", "text": final_text}],
@@ -59,7 +59,7 @@ def make_text_provider(*chunks: str) -> MagicMock:
 
 
 def make_tool_provider(tool_name: str, tool_use_id: str = "tc-1") -> MagicMock:
-    """返回一个先请求工具调用、再返回最终文本的 mock provider。"""
+    """返回一个先请求工具调用、再返回最终文本的 mock provider / Return a mock provider that first requests a tool call, then returns final text."""
     from nanoharness.provider.base import ToolCall
 
     tool_call = ToolCall(tool_use_id=tool_use_id, tool_name=tool_name, tool_input={})
@@ -85,11 +85,11 @@ def make_tool_provider(tool_name: str, tool_use_id: str = "tc-1") -> MagicMock:
     return provider
 
 
-# ─── LLMRouter 分类行为测试 ────────────────────────────────────────────────────
+# ─── LLMRouter 分类行为测试 / LLMRouter Classification Behavior Tests ────────
 
 @pytest.mark.asyncio
 async def test_simple_greeting_routed_to_t0():
-    """简单打招呼场景 → LLM 返回 T0 分类 → 路由结果是 T0。"""
+    """简单打招呼场景 → LLM 返回 T0 分类 → 路由结果是 T0 / Simple greeting → LLM returns T0 classification → route result is T0."""
     provider = make_classify_provider("T0", confidence=0.95)
     router = LLMRouter(provider=provider)
 
@@ -102,7 +102,7 @@ async def test_simple_greeting_routed_to_t0():
 
 @pytest.mark.asyncio
 async def test_complex_refactoring_routed_to_t3():
-    """复杂架构重构场景 → LLM 返回 T3 分类。"""
+    """复杂架构重构场景 → LLM 返回 T3 分类 / Complex architecture refactoring scenario → LLM returns T3 classification."""
     provider = make_classify_provider("T3", confidence=0.88)
     router = LLMRouter(provider=provider)
 
@@ -114,9 +114,9 @@ async def test_complex_refactoring_routed_to_t3():
 
 @pytest.mark.asyncio
 async def test_llm_timeout_degrades_to_heuristic():
-    """LLM 调用超时 → 降级到规则启发式 → method == 'heuristic' 或 'fallback'。"""
+    """LLM 调用超时 → 降级到规则启发式 → method == 'heuristic' 或 'fallback' / LLM call timeout → degrade to rule-based heuristic → method == 'heuristic' or 'fallback'."""
     async def _slow_complete(*args, **kwargs):
-        await asyncio.sleep(10)  # 明显超过 timeout
+        await asyncio.sleep(10)  # 明显超过 timeout / clearly exceeds timeout
         return MagicMock(final_text='{"tier": "T1"}')
 
     provider = MagicMock()
@@ -126,14 +126,14 @@ async def test_llm_timeout_degrades_to_heuristic():
     router = LLMRouter(provider=provider, timeout=0.05)
     result = await router.classify("你好")
 
-    # 超时后必须降级到非 llm 方法
+    # 超时后必须降级到非 llm 方法 / After timeout must degrade to a non-llm method
     assert result.method in ("heuristic", "fallback")
-    assert result.tier in (Tier.T0, Tier.T1, Tier.T2, Tier.T3)  # 有效值
+    assert result.tier in (Tier.T0, Tier.T1, Tier.T2, Tier.T3)  # 有效值 / valid values
 
 
 @pytest.mark.asyncio
 async def test_invalid_json_response_falls_back_to_t1():
-    """LLM 返回非 JSON 垃圾文本 → 解析失败 → method == 'fallback' → tier == T1。"""
+    """LLM 返回非 JSON 垃圾文本 → 解析失败 → method == 'fallback' → tier == T1 / LLM returns non-JSON garbage text → parse failure → method == 'fallback' → tier == T1."""
     provider = MagicMock()
     provider.model_id = "garbage-model"
     provider.complete = AsyncMock(return_value=MagicMock(
@@ -148,33 +148,33 @@ async def test_invalid_json_response_falls_back_to_t1():
 
 
 def test_heuristic_classifier_greeting_matches_t0():
-    """规则启发式：'你好' 关键词 → T0。"""
+    """规则启发式：'你好' 关键词 → T0 / Rule-based heuristic: '你好' keyword → T0."""
     result = heuristic_classify("你好啊，今天天气不错")
     assert result.tier == Tier.T0
     assert result.method == "heuristic"
 
 
 def test_heuristic_classifier_refactor_matches_t3():
-    """规则启发式：'重构' 关键词 → T3。"""
+    """规则启发式：'重构' 关键词 → T3 / Rule-based heuristic: '重构' keyword → T3."""
     result = heuristic_classify("请帮我重构这段服务代码")
     assert result.tier == Tier.T3
     assert result.method == "heuristic"
 
 
-# ─── 指纹约束测试：路由到不同 tier 后的行为预期 ────────────────────────────────
+# ─── 指纹约束测试：路由到不同 tier 后的行为预期 / Fingerprint Constraint Tests: behavior expectations after routing to different tiers ─
 
 @pytest.mark.asyncio
 async def test_t0_routed_agent_produces_no_tool_calls():
     """
-    T0 路由场景：简单问题不应触发工具调用。
-    用 BehaviorConstraint 断言，不断言输出文字。
+    T0 路由场景：简单问题不应触发工具调用 / T0 routing scenario: simple questions should not trigger tool calls.
+    用 BehaviorConstraint 断言，不断言输出文字 / Assert with BehaviorConstraint, not on output text.
     """
-    # T0 任务：只返回文本，不调用工具
+    # T0 任务：只返回文本，不调用工具 / T0 task: only return text, no tool calls
     provider = make_text_provider("今天是晴天。")
 
     fp = await run_and_fingerprint("今天天气怎么样？", provider)
 
-    # 行为约束：T0 任务不应有任何工具调用
+    # 行为约束：T0 任务不应有任何工具调用 / Behavior constraint: T0 task should have no tool calls
     constraint = BehaviorConstraint(
         call_count_min=0,
         call_count_max=0,
@@ -188,8 +188,8 @@ async def test_t0_routed_agent_produces_no_tool_calls():
 @pytest.mark.asyncio
 async def test_t1_routed_agent_with_tool_satisfies_constraint():
     """
-    T1 路由场景：任务需要工具调用，约束要求 'search' 被调用。
-    用 BehaviorConstraint 断言工具集合的超集关系。
+    T1 路由场景：任务需要工具调用，约束要求 'search' 被调用 / T1 routing scenario: task needs tool calls, constraint requires 'search' to be called.
+    用 BehaviorConstraint 断言工具集合的超集关系 / Assert the superset relation of tool sets with BehaviorConstraint.
     """
     from nanoharness.core.tool_executor import ToolRegistry, ToolDefinition
 
@@ -213,12 +213,12 @@ async def test_t1_routed_agent_with_tool_satisfies_constraint():
         tool_definitions=registry.as_api_list(),
     )
 
-    # 超集约束：实际调用集合 ⊇ {"search"}
+    # 超集约束：实际调用集合 ⊇ {"search"} / Superset constraint: actual call set ⊇ {"search"}
     constraint = BehaviorConstraint(
         must_call_tools={"search"},
         must_execute_tools={"search"},
         call_count_min=1,
-        call_count_max=2,   # 允许 ±1 浮动
+        call_count_max=2,   # 允许 ±1 浮动 / allow ±1 fluctuation
         must_complete=True,
     )
     constraint.assert_satisfied(fp)

@@ -4,11 +4,11 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
-# ─── Base Event ───────────────────────────────────────────────────────────────
+# ─── 基础事件 / Base Event ───────────────────────────────────────────────────────
 
 @dataclass
 class AgentEvent:
-    # Non-default fields must come first; subclasses override `kind` with a discriminator string
+    # 非默认字段必须在前；子类用判别字符串覆盖 `kind` / Non-default fields must come first; subclasses override `kind` with a discriminator string
     trace_id: str
     session_key: str
     agent_id: str
@@ -17,7 +17,7 @@ class AgentEvent:
     event_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
 
-# ─── Concrete Event Types ─────────────────────────────────────────────────────
+# ─── 具体事件类型 / Concrete Event Types ─────────────────────────────────────────────
 
 @dataclass
 class StateChangeEvent(AgentEvent):
@@ -31,7 +31,7 @@ class ToolCallEvent(AgentEvent):
     kind: str = "tool_call"
     tool_name: str = ""
     tool_use_id: str = ""
-    input_summary: str = ""    # truncated repr of input, not full payload
+    input_summary: str = ""    # 输入的截断表示，非完整 payload / truncated repr of input, not full payload
 
 
 @dataclass
@@ -41,7 +41,7 @@ class ToolResultEvent(AgentEvent):
     tool_use_id: str = ""
     success: bool = True
     latency_ms: float = 0.0
-    output_preview: str = ""   # first 200 chars of result
+    output_preview: str = ""   # 结果的前 200 个字符 / first 200 chars of result
 
 
 @dataclass
@@ -72,19 +72,19 @@ class ErrorEvent(AgentEvent):
 
 @dataclass
 class TextDeltaEvent(AgentEvent):
-    """Streaming token delta — consumers can reassemble or display incrementally."""
+    """流式 token 增量 — 消费者可重组或增量展示 / Streaming token delta — consumers can reassemble or display incrementally."""
     kind: str = "text_delta"
     delta: str = ""
 
 
-# ─── Event Store ──────────────────────────────────────────────────────────────
+# ─── 事件存储 / Event Store ──────────────────────────────────────────────────────
 
 class EventStore:
     """
-    In-memory append-only event log with trace_id indexing.
+    内存中只追加的事件日志，带 trace_id 索引 / In-memory append-only event log with trace_id indexing.
 
-    Production extension point: swap _log for SQLite writes in flush().
-    Current scope: single-process, supports Gradio replay dashboard.
+    生产扩展点：在 flush() 中把 _log 换成 SQLite 写入 / Production extension point: swap _log for SQLite writes in flush().
+    当前范围：单进程，支持 Gradio 回放仪表板 / Current scope: single-process, supports Gradio replay dashboard.
     """
 
     def __init__(self) -> None:

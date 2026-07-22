@@ -40,29 +40,29 @@ from nanoharness.core.context import AgentContext, Message
 from nanoharness.provider.anthropic import AnthropicProvider
 
 
-# ─── 构造长对话历史 ────────────────────────────────────────────────────────────
+# ─── 构造长对话历史 / Build Long Conversation History ────────────────────────
 
 def build_long_history() -> list[Message]:
     """
-    构造一个真实的多轮 ReAct 对话历史：30+ 条消息，含大量工具结果。
+    构造一个真实的多轮 ReAct 对话历史：30+ 条消息，含大量工具结果 / Build a realistic multi-turn ReAct history: 30+ messages with lots of tool results.
 
-    模拟场景：用户让 Agent 调研某个技术方案，多轮工具调用 + 分析。
-    每条消息设置真实量级的 token_count（基于内容长度估算）。
+    模拟场景：用户让 Agent 调研某个技术方案，多轮工具调用 + 分析 / Simulated scenario: user asks the Agent to research a technical solution, with multi-turn tool calls + analysis.
+    每条消息设置真实量级的 token_count（基于内容长度估算）/ Each message gets a realistic-magnitude token_count (estimated from content length).
     """
     msgs: list[Message] = []
 
-    # 初始提问
+    # 初始提问 / Initial question
     msgs.append(Message(role="user", content=(
         "我想调研一下用 Rust 重写我们核心交易系统的可行性，"
         "帮我查相关资料并给出分析。"
     )))
 
-    # 模拟 8 轮 ReAct：assistant 思考 + 工具调用 + 工具结果
+    # 模拟 8 轮 ReAct：assistant 思考 + 工具调用 + 工具结果 / Simulate 8 rounds of ReAct: assistant thinking + tool call + tool result
     tool_results = [
         "Rust 在金融系统应用案例：某交易所用 Rust 重写后延迟从 200μs 降到 50μs，"
         "内存安全消除了 70% 的 CVE。但开发效率比 Python 低约 40%，"
         "团队需要 3-6 个月学习曲线。关键依赖：tokio 异步运行时、serde 序列化。"
-        * 3,   # 放大 token 量
+        * 3,   # 放大 token 量 / amplify token count
         "现有 Python 系统瓶颈分析：GIL 导致 CPU 密集任务无法真并行，"
         "当前 P99 延迟 15ms，目标 5ms。核心热点在订单匹配引擎，"
         "占 60% CPU。数据库 IO 已优化，非瓶颈。" * 3,
@@ -91,7 +91,7 @@ def build_long_history() -> list[Message]:
 
 
 def total_tokens(msgs: list[Message]) -> int:
-    """估算消息列表总 token。对 list content（tool_use/tool_result）用 json.dumps。"""
+    """估算消息列表总 token。对 list content（tool_use/tool_result）用 json.dumps / Estimate total tokens of a message list; for list content (tool_use/tool_result) use json.dumps."""
     total = 0
     for m in msgs:
         if m.token_count > 0:
@@ -103,10 +103,10 @@ def total_tokens(msgs: list[Message]) -> int:
     return total
 
 
-# ─── Mock 摘要 Provider ────────────────────────────────────────────────────────
+# ─── Mock 摘要 Provider / Mock Summary Provider ──────────────────────────────
 
 class _MockSummaryProvider:
-    """Mock provider：摘要返回固定文本，验证压缩流程不调真实 LLM。"""
+    """Mock provider：摘要返回固定文本，验证压缩流程不调真实 LLM / Mock provider: summary returns fixed text, verifying the compaction flow without calling a real LLM."""
     model_id = "mock-haiku"
 
     async def complete(self, system, messages, tools=None, max_tokens=4096):
@@ -120,7 +120,7 @@ class _MockSummaryProvider:
         return resp
 
 
-# ─── Benchmark 主流程 ──────────────────────────────────────────────────────────
+# ─── Benchmark 主流程 / Benchmark Main Flow ──────────────────────────────────
 
 async def run_benchmark(real: bool) -> dict:
     if real:
@@ -136,12 +136,12 @@ async def run_benchmark(real: bool) -> dict:
         ) if real else _MockSummaryProvider()
     )
 
-    # 用较小的 keep_budget 让压缩真的触发（演示用，生产是 20000）
-    # mock 模式 token 是估算值，量级小；真实模式用默认 20000 即可
+    # 用较小的 keep_budget 让压缩真的触发（演示用，生产是 20000）/ Use a smaller keep_budget so compaction actually triggers (demo; production is 20000)
+    # mock 模式 token 是估算值，量级小；真实模式用默认 20000 即可 / In mock mode tokens are estimated and small; in real mode use the default 20000
     config = CompactionConfig(
         context_window_limit=180_000,
         keep_recent_messages=6,
-        keep_budget_tokens=300,    # 故意调小，让压缩明显触发
+        keep_budget_tokens=300,    # 故意调小，让压缩明显触发 / intentionally small so compaction clearly triggers
         safety_margin=0.10,
     )
     engine = CompactionEngine(provider=provider, config=config)
@@ -163,14 +163,14 @@ async def run_benchmark(real: bool) -> dict:
     print(f"{'='*60}")
     print(f"  压缩前: {msg_count_before} 条消息, {tokens_before} tokens\n")
 
-    # 验证 turn-boundary 保护：工具结果不被切断
+    # 验证 turn-boundary 保护：工具结果不被切断 / Verify turn-boundary protection: tool results are not cut
     cut = find_turn_boundary_cut(ctx.history, config.keep_budget_tokens)
     safe_cut = retreat_to_turn_boundary(ctx.history, cut)
     print(f"  切点: raw={cut} safe={safe_cut}（turn-boundary 保护）")
     if safe_cut < len(ctx.history):
         assert not ctx.history[safe_cut].is_tool_result(), "切断点不应是孤儿 tool_result"
 
-    # 执行压缩
+    # 执行压缩 / Run compaction
     await engine.compact(ctx)
 
     tokens_after = total_tokens(ctx.history)
@@ -183,16 +183,16 @@ async def run_benchmark(real: bool) -> dict:
     print(f"  消息削减: {msg_count_before} → {msg_count_after}")
     print(f"{'='*60}\n")
 
-    # 验证摘要保留：摘要消息应存在且含关键信息
+    # 验证摘要保留：摘要消息应存在且含关键信息 / Verify summary retention: a summary message should exist and contain key info
     summary_msgs = [m for m in ctx.history
                     if isinstance(m.content, str) and "SUMMARY" in m.content.upper()]
     print(f"  摘要消息数: {len(summary_msgs)}")
     if summary_msgs:
         print(f"  摘要预览: {summary_msgs[0].content[:80]}...")
 
-    # 重要性评分样例（面试可讲）
+    # 重要性评分样例（面试可讲）/ Importance score sample (good talking point in interviews)
     print(f"\n  重要性评分样例（tool_result 应高于 assistant text）:")
-    for i in (1, 2, 3):   # call-0, tool_result-0, analysis-0
+    for i in (1, 2, 3):   # call-0, tool_result-0, analysis-0 / call-0, tool_result-0, analysis-0
         if i < len(history):
             score = semantic_importance_score(history[i], i, len(history))
             role = history[i].role

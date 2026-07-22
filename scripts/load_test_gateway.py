@@ -1,7 +1,7 @@
 """
-Gateway 压测脚本：测车道隔离层 P50/P95/P99 延迟和并发安全。
+Gateway 压测脚本：测车道隔离层 P50/P95/P99 延迟和并发安全 / Gateway load test: measure lane isolation P50/P95/P99 latency and concurrency safety.
 
-用法：
+用法 / Usage:
     python scripts/load_test_gateway.py                    # 默认 50 并发 × 3 轮
     python scripts/load_test_gateway.py --concurrency 100 --rounds 5
 
@@ -41,7 +41,7 @@ from nanoharness.observability.metrics import get_metrics
 
 
 class _LoadTestChannel:
-    """压测用通道：记录发送，不真实发消息。"""
+    """压测用通道：记录发送，不真实发消息 / Load-test channel: records sends, does not actually deliver messages."""
     channel_id = "loadtest"
 
     def __init__(self) -> None:
@@ -60,12 +60,12 @@ class _LoadTestChannel:
 
 
 def build_gateway(handler_latency_ms: float) -> Gateway:
-    """构建压测用 Gateway，handler 模拟固定处理耗时。"""
+    """构建压测用 Gateway，handler 模拟固定处理耗时 / Build a load-test Gateway whose handler simulates a fixed processing latency."""
     router = ChannelRouter(default_agent_id="agent")
     gw = Gateway(router=router, safety=SafetyPolicy(group_require_mention=False))
 
     async def handler(env: InboundEnvelope) -> OutboundEnvelope:
-        # 模拟 Agent 处理耗时
+        # 模拟 Agent 处理耗时 / Simulate Agent processing latency
         await asyncio.sleep(handler_latency_ms / 1000)
         return OutboundEnvelope(
             target_channel="loadtest", target_peer=env.chat_id,
@@ -78,9 +78,9 @@ def build_gateway(handler_latency_ms: float) -> Gateway:
 
 
 async def _send_one(gw: Gateway, session_key: str, seq: int) -> float:
-    """发一条消息，返回 Gateway 端到端处理耗时（毫秒）。"""
+    """发一条消息，返回 Gateway 端到端处理耗时（毫秒）/ Send one message and return the Gateway end-to-end processing latency (ms)."""
     env = InboundEnvelope(
-        envelope_id=f"load-{session_key}-{seq}",   # 唯一 id 避免去重
+        envelope_id=f"load-{session_key}-{seq}",   # 唯一 id 避免去重 / unique id to avoid dedup
         channel_id="loadtest",
         sender_id=session_key,
         chat_id=session_key,
@@ -102,15 +102,15 @@ async def run_load_test(concurrency: int, rounds: int, handler_latency_ms: float
           f"handler 延迟 {handler_latency_ms}ms)")
     print(f"{'='*60}\n")
 
-    # 阶段1：并发安全验证——同 session 串行、跨 session 并行
+    # 阶段1：并发安全验证——同 session 串行、跨 session 并行 / Phase 1: concurrency safety verification — same-session serial, cross-session parallel
     print("  [验证] 车道隔离：同 session 串行 / 跨 session 并行...")
-    # 两个不同 session 各发 2 条，handler 各 sleep 50ms
+    # 两个不同 session 各发 2 条，handler 各 sleep 50ms / Two different sessions each send 2 messages, handler sleeps 50ms each
     verify_gw = build_gateway(50)
     t0 = time.monotonic()
     await asyncio.gather(
         _send_one(verify_gw, "verify-A", 0),
-        _send_one(verify_gw, "verify-A", 1),   # 同 session，串行 → 100ms
-        _send_one(verify_gw, "verify-B", 0),   # 不同 session，并行
+        _send_one(verify_gw, "verify-A", 1),   # 同 session，串行 → 100ms / same session, serial → 100ms
+        _send_one(verify_gw, "verify-B", 0),   # 不同 session，并行 / different session, parallel
     )
     verify_elapsed = (time.monotonic() - t0) * 1000
     print(f"    3 条消息（同 session 2 条串行 + 跨 session 1 条并行）"
@@ -119,14 +119,14 @@ async def run_load_test(concurrency: int, rounds: int, handler_latency_ms: float
     assert verify_elapsed < 180, "车道隔离异常：串行耗时不对"
     print(f"    ✓ 车道隔离正常\n")
 
-    # 阶段2：正式压测
+    # 阶段2：正式压测 / Phase 2: formal load test
     print(f"  [压测] 投递 {concurrency}×{rounds} = {concurrency*rounds} 条消息...")
     latencies: list[float] = []
     errors = 0
     t_start = time.monotonic()
 
     for rnd in range(rounds):
-        # 每轮并发投递 concurrency 条（每个 session 一条）
+        # 每轮并发投递 concurrency 条（每个 session 一条）/ Each round concurrently delivers concurrency messages (one per session)
         tasks = [
             _send_one(gw, f"sess-{i}", rnd)
             for i in range(concurrency)
@@ -150,7 +150,7 @@ async def run_load_test(concurrency: int, rounds: int, handler_latency_ms: float
     qps = total_msgs / total_elapsed if total_elapsed > 0 else 0
     error_rate = errors / total_msgs * 100 if total_msgs else 0
 
-    # 同时记录到 metrics（供 Gradio 面板展示）
+    # 同时记录到 metrics（供 Gradio 面板展示）/ Also record to metrics (for the Gradio panel)
     for lat in latencies:
         metrics.observe_latency(lat / 1000, kind="gateway")
 

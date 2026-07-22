@@ -17,13 +17,13 @@ from nanoharness.router.tiers import Tier, TierRegistry
 
 log = logging.getLogger(__name__)
 
-# ─── Per-session 锁管理 ────────────────────────────────────────────────────────
+# ─── Per-session 锁管理 / per-session lock management ────────────────────────────────────────────────────────
 
-# 全局 session_key → asyncio.Lock 映射
+# 全局 session_key → asyncio.Lock 映射 / global session_key → asyncio.Lock mapping
 _session_locks: dict[str, asyncio.Lock] = {}
 
-# ContextVar：记录当前协程持有哪些锁的 id，用于重入检测
-# 每个 asyncio Task 有自己的 ContextVar 副本，天然隔离
+# ContextVar：记录当前协程持有哪些锁的 id，用于重入检测 / ContextVar: tracks which lock ids the current coroutine holds, for reentrance detection
+# 每个 asyncio Task 有自己的 ContextVar 副本，天然隔离 / each asyncio Task has its own ContextVar copy, naturally isolated
 _LOCK_OWNER: ContextVar[frozenset[int]] = ContextVar("_lock_owner", default=frozenset())
 
 
@@ -37,24 +37,28 @@ def _get_session_lock(session_key: str) -> asyncio.Lock:
 
 class TurnRunner:
     """
-    编排一次完整 turn 的生命周期。
+    编排一次完整 turn 的生命周期。 / Orchestrates the lifecycle of a complete turn.
 
-    职责：
-    1. per-session 串行化：同一 session 同时只允许一个 turn 运行
-    2. ContextVar 重入检测：subagent 用相同 session_key 时不死锁
-    3. 调用 LLMRouter 决定档位，选择对应 provider
-    4. 驱动 NanoCore async generator，向外透传所有 AgentEvent
-    5. 在 turn 前后触发 TurnHook
+    职责： / Responsibilities:
+    1. per-session 串行化：同一 session 同时只允许一个 turn 运行 / per-session serialization: only one turn runs at a time for the same session
+    2. ContextVar 重入检测：subagent 用相同 session_key 时不死锁 / ContextVar reentrance detection: no deadlock when a subagent uses the same session_key
+    3. 调用 LLMRouter 决定档位，选择对应 provider / Calls LLMRouter to decide the tier and selects the corresponding provider
+    4. 驱动 NanoCore async generator，向外透传所有 AgentEvent / Drives the NanoCore async generator, forwarding all AgentEvents outward
+    5. 在 turn 前后触发 TurnHook / Triggers TurnHook before and after the turn
 
-    面试话术：
+    面试话术： / Interview talking point:
     "TurnRunner 用 per-session asyncio.Lock 保证同一对话串行，
     用 ContextVar 检测重入——当 subagent 以相同 session_key 进来时，
     它已经持有锁，直接跳过等待。两者配合既不会并发乱序，也不会死锁。"
+
+    "TurnRunner uses a per-session asyncio.Lock to serialize the same conversation,
+    and a ContextVar to detect reentrance — when a subagent arrives with the same session_key,
+    it already holds the lock and skips waiting. Together they prevent both concurrent reordering and deadlock."
     """
 
     def __init__(
         self,
-        provider_factory: dict[Tier, LLMProvider],   # tier → provider 实例
+        provider_factory: dict[Tier, LLMProvider],   # tier → provider 实例 / tier → provider instance
         registry: TierRegistry | None = None,
         router: LLMRouter | None = None,
         event_store: EventStore | None = None,
@@ -77,16 +81,16 @@ class TurnRunner:
         compaction: Any | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """
-        主入口，返回 async generator。
-        调用方 `async for event in runner.run(ctx, msg)` 消费。
+        主入口，返回 async generator。 / Main entry, returns an async generator.
+        调用方 `async for event in runner.run(ctx, msg)` 消费。 / Callers consume via `async for event in runner.run(ctx, msg)`.
         """
         lock = _get_session_lock(ctx.session_key)
         lock_id = id(lock)
         owned = _LOCK_OWNER.get()
 
         if lock_id in owned:
-            # 当前协程已经持有这个 session 的锁（重入场景：subagent）
-            # 直接执行，不再等待锁，避免死锁
+            # 当前协程已经持有这个 session 的锁（重入场景：subagent） / Current coroutine already holds this session's lock (reentrance case: subagent)
+            # 直接执行，不再等待锁，避免死锁 / Execute directly without waiting for the lock to avoid deadlock
             async for ev in self._execute(ctx, user_message, tools, tool_definitions, compaction):
                 yield ev
         else:
@@ -119,11 +123,11 @@ class TurnRunner:
             user_message=user_message,
         )
 
-        # ── before_turn hook ──────────────────────────────────────────────────
+        # ── before_turn 钩子 / before_turn hook ──────────────────────────────────────────────────
         for hook in self._hooks:
             await safe_call(hook.before_turn(hook_ctx))
 
-        # ── 路由决策 ──────────────────────────────────────────────────────────
+        # ── 路由决策 / routing decision ──────────────────────────────────────────────────────────
         tier = self._default_tier
         if self._router:
             try:
@@ -133,7 +137,7 @@ class TurnRunner:
                     session_key=ctx.session_key,
                 )
                 tier = result.tier
-                # 路由策略 hint 注入 extra_context，供 PromptAssemblerStage 使用
+                # 路由策略 hint 注入 extra_context，供 PromptAssemblerStage 使用 / Inject routing policy hint into extra_context for PromptAssemblerStage
                 ctx.extra_context["router_tier"] = str(tier)
                 ctx.extra_context["router_hint"] = self._registry.policy_hint(tier)
                 log.info("路由决策: session=%s tier=%s confidence=%.2f",
@@ -141,15 +145,15 @@ class TurnRunner:
             except Exception as exc:
                 log.warning("路由失败，使用默认档位 %s: %s", self._default_tier, exc)
 
-        # ── 选择对应档位的 provider ───────────────────────────────────────────
+        # ── 选择对应档位的 provider / select the provider for the chosen tier ───────────────────────────────────────────
         provider = self._providers.get(tier) or self._providers.get(self._default_tier)
         if provider is None:
             raise RuntimeError(f"未找到 tier={tier} 的 provider，请检查 provider_factory 配置")
 
-        # 更新 ctx 的模型 ID（用于日志和 cost 统计）
+        # 更新 ctx 的模型 ID（用于日志和 cost 统计） / Update ctx's model ID (for logging and cost stats)
         ctx.model_id = provider.model_id
 
-        # ── 驱动 NanoCore ─────────────────────────────────────────────────────
+        # ── 驱动 NanoCore / drive NanoCore ─────────────────────────────────────────────────────
         core = NanoCore(
             ctx=ctx,
             provider=provider,
@@ -164,7 +168,7 @@ class TurnRunner:
 
         try:
             async for event in core.run_turn(user_message):
-                # 触发 on_event hook（吞异常，不阻塞主流程）
+                # 触发 on_event hook（吞异常，不阻塞主流程） / Trigger on_event hook (swallow exceptions, don't block the main flow)
                 for hook in self._hooks:
                     await safe_call(hook.on_event(event))
                 if isinstance(event, DoneEvent):
@@ -184,7 +188,7 @@ class TurnRunner:
 
         elapsed = (time.monotonic() - t0) * 1000
 
-        # ── after_turn / on_error hook ────────────────────────────────────────
+        # ── after_turn / on_error 钩子 / after_turn / on_error hook ────────────────────────────────────────
         if done_event:
             result_summary = TurnHookResult(
                 final_text=done_event.final_text,

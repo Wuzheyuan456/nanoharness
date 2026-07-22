@@ -35,7 +35,7 @@ DISCORD_MAX_LEN = 2000
 
 class DiscordChannel:
     """
-    Discord 通道插件。外部注入 client 和 bot_user_id，便于测试用 fake 替换。
+    Discord 通道插件。外部注入 client 和 bot_user_id，便于测试用 fake 替换。 / Discord channel plugin. Client and bot_user_id are injected from outside so tests can swap in fakes.
     """
 
     channel_id = "discord"
@@ -45,7 +45,7 @@ class DiscordChannel:
         self._bot_user_id = str(bot_user_id)
 
     async def start(self) -> None:
-        """启动 client。生产环境这里 client.run(token)。"""
+        """启动 client。生产环境这里 client.run(token)。 / Start client. In production this calls client.run(token)."""
         log.info("Discord 通道已启动（bot_user_id=%s）", self._bot_user_id)
 
     async def stop(self) -> None:
@@ -53,10 +53,10 @@ class DiscordChannel:
 
     def parse_message(self, message: Any) -> InboundEnvelope:
         """
-        discord.Message → InboundEnvelope。
+        discord.Message → InboundEnvelope。 / discord.Message → InboundEnvelope.
 
-        channel 类型用 isinstance 区分——discord.py 的 DMChannel 和
-        TextChannel 是不同类。测试用 SimpleNamespace + 自定义类伪造。
+        channel 类型用 isinstance 区分——discord.py 的 DMChannel 和 / channel type is distinguished via isinstance—discord.py's DMChannel and
+        TextChannel 是不同类。测试用 SimpleNamespace + 自定义类伪造。 / TextChannel are different classes. Tests fake them with SimpleNamespace + custom classes.
         """
         channel = getattr(message, "channel", None)
         author = getattr(message, "author", None)
@@ -64,17 +64,17 @@ class DiscordChannel:
         channel_id = getattr(channel, "id", 0) if channel else 0
         author_id = getattr(author, "id", 0) if author else 0
 
-        # chat_type：DM/Group → DIRECT，其余（TextChannel/VoiceChannel）→ GROUP
+        # chat_type：DM/Group → DIRECT，其余（TextChannel/VoiceChannel）→ GROUP / chat_type: DM/Group → DIRECT, others (TextChannel/VoiceChannel) → GROUP
         chat_type = self._resolve_chat_type(channel)
 
-        # mentions_bot：检查 mentions 列表
+        # mentions_bot：检查 mentions 列表 / mentions_bot: check mentions list
         mentions = self._is_mentioned(message)
 
-        # reply 链路
+        # reply 链路 / reply chain
         reply_ref = getattr(message, "reference", None)
         reply_to_sender_id = ""
         if reply_ref is not None and getattr(reply_ref, "message_id", None):
-            # resolved 才有 author，cached 可能只有 id
+            # resolved 才有 author，cached 可能只有 id / only resolved has author; cached may only have id
             resolved = getattr(reply_ref, "resolved", None)
             if resolved is not None:
                 resolved_author = getattr(resolved, "author", None)
@@ -92,10 +92,10 @@ class DiscordChannel:
         )
 
     def _resolve_chat_type(self, channel: Any) -> ChatType:
-        """Discord channel 类型 → ChatType。用 isinstance 兼容子类。"""
+        """Discord channel 类型 → ChatType。用 isinstance 兼容子类。 / Discord channel type → ChatType. Uses isinstance to tolerate subclasses."""
         if channel is None:
             return ChatType.DIRECT
-        # 私聊/群组私聊 → DIRECT
+        # 私聊/群组私聊 → DIRECT / DM / group DM → DIRECT
         type_name = type(channel).__name__
         if type_name in ("DMChannel", "GroupChannel"):
             return ChatType.DIRECT
@@ -103,10 +103,10 @@ class DiscordChannel:
             return ChatType.THREAD
         if type_name in ("TextChannel", "VoiceChannel", "StageChannel"):
             return ChatType.GROUP
-        return ChatType.DIRECT   # 兜底
+        return ChatType.DIRECT   # 兜底 / fallback
 
     def _is_mentioned(self, message: Any) -> bool:
-        """检查 mentions 列表里是否有本 bot。"""
+        """检查 mentions 列表里是否有本 bot。 / Check whether this bot is in the mentions list."""
         if not self._bot_user_id:
             return False
         mentions = getattr(message, "mentions", None) or []
@@ -116,10 +116,10 @@ class DiscordChannel:
         return False
 
     async def send(self, envelope: OutboundEnvelope) -> ChannelSendResult:
-        """发送出站消息，自动分块（2000 上限）。"""
+        """发送出站消息，自动分块（2000 上限）。 / Send outbound message, auto-chunked (2000 limit)."""
         chunks = _split_long_text(envelope.content, DISCORD_MAX_LEN)
         sent_ids: list[str] = []
-        # Discord 需要 fetch channel 再 send；生产里 client.get_channel / fetch_channel
+        # Discord 需要 fetch channel 再 send；生产里 client.get_channel / fetch_channel / Discord requires fetching channel before send; in production use client.get_channel / fetch_channel
         channel = None
         get_channel = getattr(self._client, "get_channel", None)
         if get_channel is not None:

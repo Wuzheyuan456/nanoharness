@@ -9,24 +9,24 @@ from pathlib import Path
 from typing import Iterator
 
 
-# ─── 记忆类型 ──────────────────────────────────────────────────────────────────
+# ─── 记忆类型 / Memory type ──────────────────────────────────────────────────────────────────
 
 class MemoryType(StrEnum):
-    FACT       = "fact"        # 客观事实（"用户叫 Alex"）
-    PREFERENCE = "preference"  # 用户偏好（"喜欢简洁代码风格"）
-    SUMMARY    = "summary"     # 会话摘要
-    TOOL_RESULT = "tool_result"  # 重要工具结果（"搜索发现 xxx API 已废弃"）
+    FACT       = "fact"        # 客观事实（"用户叫 Alex"） / objective fact ("user is Alex")
+    PREFERENCE = "preference"  # 用户偏好（"喜欢简洁代码风格"） / user preference ("prefers concise code style")
+    SUMMARY    = "summary"     # 会话摘要 / session summary
+    TOOL_RESULT = "tool_result"  # 重要工具结果（"搜索发现 xxx API 已废弃"） / important tool result ("search found xxx API deprecated")
 
 
-# ─── 数据模型 ──────────────────────────────────────────────────────────────────
+# ─── 数据模型 / Data model ──────────────────────────────────────────────────────────────────
 
 @dataclass
 class MemoryEntry:
     content: str
     agent_id: str
     memory_type: MemoryType
-    importance: float = 0.5          # 0.0 ~ 1.0，写入时由调用方评估
-    session_key: str = ""            # 来源 session，可为空（全局事实）
+    importance: float = 0.5          # 0.0 ~ 1.0，写入时由调用方评估 / 0.0 ~ 1.0, assessed by caller at write time
+    session_key: str = ""            # 来源 session，可为空（全局事实） / source session, may be empty (global fact)
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     created_at: float = field(default_factory=time.time)
     accessed_at: float = field(default_factory=time.time)
@@ -42,18 +42,18 @@ class SessionRecord:
     ended_at: float = field(default_factory=time.time)
 
 
-# ─── MemoryStore ──────────────────────────────────────────────────────────────
+# ─── MemoryStore / 记忆存储 ──────────────────────────────────────────────────────────────
 
 class MemoryStore:
     """
-    SQLite 存储层，含 FTS5 全文索引（替代向量库）。
+    SQLite 存储层，含 FTS5 全文索引（替代向量库）。 / SQLite storage layer with FTS5 full-text index (replaces vector DB).
 
-    两张表：
-    - memories   : L3 长期记忆条目（fact / preference / tool_result）
-    - sessions   : L2 会话摘要
-    - memories_fts: FTS5 虚拟表，提供 BM25 全文检索
+    两张表： / Two tables:
+    - memories   : L3 长期记忆条目（fact / preference / tool_result） / - L3 long-term memory entries (fact / preference / tool_result)
+    - sessions   : L2 会话摘要 / - L2 session summaries
+    - memories_fts: FTS5 虚拟表，提供 BM25 全文检索 / - memories_fts: FTS5 virtual table providing BM25 full-text search
 
-    面试话术：
+    面试话术 / Interview talking point:
     "我没用 sqlite-vec，用了 SQLite 内置的 FTS5。
     记忆检索本质是关键词触发，FTS5 内置 BM25 零额外依赖，
     <10000 条记忆的场景查询延迟 <5ms，完全够用。"
@@ -113,10 +113,10 @@ class MemoryStore:
         self._conn.executescript(self._DDL)
         self._conn.commit()
 
-    # ── 长期记忆 写 ───────────────────────────────────────────────────────────
+    # ── 长期记忆 写 / Long-term memory: write ───────────────────────────────────────────────────────────
 
     def upsert(self, entry: MemoryEntry) -> None:
-        """写入或覆盖更新（按 id 去重）。"""
+        """写入或覆盖更新（按 id 去重）。 / Insert or upsert by id."""
         self._conn.execute(
             """
             INSERT INTO memories
@@ -142,7 +142,7 @@ class MemoryStore:
         self._conn.execute("DELETE FROM memories WHERE id=?", (memory_id,))
         self._conn.commit()
 
-    # ── 长期记忆 读 ───────────────────────────────────────────────────────────
+    # ── 长期记忆 读 / Long-term memory: read ───────────────────────────────────────────────────────────
 
     def fts_search(
         self,
@@ -151,8 +151,8 @@ class MemoryStore:
         limit: int = 20,
     ) -> list[tuple[MemoryEntry, float]]:
         """
-        FTS5 全文检索，返回 (entry, bm25_score) 列表。
-        bm25() 返回负值（越小越相关），这里取绝对值方便后续加权。
+        FTS5 全文检索，返回 (entry, bm25_score) 列表。 / FTS5 full-text search, returns list of (entry, bm25_score).
+        bm25() 返回负值（越小越相关），这里取绝对值方便后续加权。 / bm25() returns negative values (smaller = more relevant); take absolute value for later weighting.
         """
         if not query.strip():
             return []
@@ -176,7 +176,7 @@ class MemoryStore:
         limit: int = 10,
         memory_type: MemoryType | None = None,
     ) -> list[MemoryEntry]:
-        """按 accessed_at 倒序取最近记录，可按类型过滤。"""
+        """按 accessed_at 倒序取最近记录，可按类型过滤。 / Return recent records by accessed_at desc, optional type filter."""
         if memory_type:
             rows = self._conn.execute(
                 "SELECT * FROM memories WHERE agent_id=? AND memory_type=? "
@@ -192,14 +192,14 @@ class MemoryStore:
         return [self._row_to_entry(r) for r in rows]
 
     def touch(self, memory_id: str) -> None:
-        """标记访问时间 + 计数（召回时调用）。"""
+        """标记访问时间 + 计数（召回时调用）。 / Update accessed_at and access_count (called on recall)."""
         self._conn.execute(
             "UPDATE memories SET accessed_at=?, access_count=access_count+1 WHERE id=?",
             (time.time(), memory_id),
         )
         self._conn.commit()
 
-    # ── 会话摘要 写/读 ────────────────────────────────────────────────────────
+    # ── 会话摘要 写/读 / Session summary: write/read ────────────────────────────────────────────────────────
 
     def upsert_session(self, record: SessionRecord) -> None:
         self._conn.execute(
@@ -222,7 +222,7 @@ class MemoryStore:
         ).fetchall()
         return [self._row_to_session(r) for r in rows]
 
-    # ── 统计 ──────────────────────────────────────────────────────────────────
+    # ── 统计 / Stats ──────────────────────────────────────────────────────────────────
 
     def count(self, agent_id: str) -> int:
         return self._conn.execute(
@@ -232,14 +232,14 @@ class MemoryStore:
     def close(self) -> None:
         self._conn.close()
 
-    # ── 内部工具 ──────────────────────────────────────────────────────────────
+    # ── 内部工具 / Internal utilities ──────────────────────────────────────────────────────────────
 
     @staticmethod
     def _fts_escape(query: str) -> str:
         """
-        为 trigram tokenizer 构造 FTS5 MATCH 查询。
-        trigram 要求每个 token 至少 3 个字符，短于 3 的词静默跳过。
-        多词用 AND 连接，提高精确度。
+        为 trigram tokenizer 构造 FTS5 MATCH 查询。 / Build an FTS5 MATCH query for the trigram tokenizer.
+        trigram 要求每个 token 至少 3 个字符，短于 3 的词静默跳过。 / trigram requires each token to be at least 3 chars; shorter tokens are silently skipped.
+        多词用 AND 连接，提高精确度。 / Multiple tokens joined with AND for higher precision.
         """
         tokens = [t.strip() for t in query.split() if len(t.strip()) >= 3]
         if not tokens:

@@ -7,13 +7,13 @@ from typing import Any, AsyncIterator, Protocol
 from nanoharness.core.context import Message
 
 
-# ─── Error Taxonomy ───────────────────────────────────────────────────────────
+# ─── Error Taxonomy / 错误分类 ───────────────────────────────────────────────
 
 class ProviderErrorType(StrEnum):
-    RATE_LIMITED = "rate_limited"        # 429 — exponential backoff + jitter
-    CONTEXT_TOO_LONG = "context_too_long"  # 400 context_length_exceeded → compact
-    AUTH_INVALID = "auth_invalid"        # 401/403 — fatal, no retry
-    SERVER_ERROR = "server_error"        # 500/529 — limited retry
+    RATE_LIMITED = "rate_limited"        # 429 — 指数退避 + 抖动 / 429 — exponential backoff + jitter
+    CONTEXT_TOO_LONG = "context_too_long"  # 400 context_length_exceeded → 压缩 / 400 context_length_exceeded → compact
+    AUTH_INVALID = "auth_invalid"        # 401/403 — 致命错误，不重试 / 401/403 — fatal, no retry
+    SERVER_ERROR = "server_error"        # 500/529 — 有限重试 / 500/529 — limited retry
     TIMEOUT = "timeout"                  # asyncio.TimeoutError
     UNKNOWN = "unknown"
 
@@ -25,7 +25,7 @@ class ProviderError(Exception):
         self.retryable = retryable
 
 
-# ─── Response Model ───────────────────────────────────────────────────────────
+# ─── Response Model / 响应模型 ───────────────────────────────────────────────
 
 @dataclass
 class ToolCall:
@@ -36,13 +36,13 @@ class ToolCall:
 
 @dataclass
 class LLMResponse:
-    """Parsed response from the LLM provider."""
-    raw_content: list[dict[str, Any]]   # Anthropic-format content blocks
+    """解析后的 LLM provider 响应。 / Parsed response from the LLM provider."""
+    raw_content: list[dict[str, Any]]   # Anthropic 格式 content blocks / Anthropic-format content blocks
     stop_reason: str                     # "end_turn" | "tool_use" | "max_tokens"
     input_tokens: int = 0
     output_tokens: int = 0
 
-    # extracted helpers
+    # 提取出的辅助字段 / extracted helpers
     tool_calls: list[ToolCall] = field(default_factory=list)
     final_text: str = ""
 
@@ -62,18 +62,18 @@ class LLMResponse:
         )
 
 
-# ─── Streaming Chunk ──────────────────────────────────────────────────────────
+# ─── Streaming Chunk / 流式块 ────────────────────────────────────────────────
 
 @dataclass
 class StreamChunk:
-    """A single streaming event from the provider."""
-    delta_text: str = ""                        # incremental text
-    tool_call_delta: dict[str, Any] | None = None  # partial tool_use block
+    """来自 provider 的单个流式事件。 / A single streaming event from the provider."""
+    delta_text: str = ""                        # 增量文本 / incremental text
+    tool_call_delta: dict[str, Any] | None = None  # 部分 tool_use block / partial tool_use block
     is_final: bool = False
-    final_response: LLMResponse | None = None   # set when is_final=True
+    final_response: LLMResponse | None = None   # is_final=True 时设置 / set when is_final=True
 
 
-# ─── Provider Protocol ────────────────────────────────────────────────────────
+# ─── Provider Protocol / Provider 协议 ───────────────────────────────────────
 
 class LLMProvider(Protocol):
     model_id: str
@@ -85,7 +85,7 @@ class LLMProvider(Protocol):
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int = 4096,
     ) -> LLMResponse:
-        """Non-streaming call. Returns full response."""
+        """非流式调用，返回完整响应。 / Non-streaming call. Returns full response."""
         ...
 
     async def stream(
@@ -95,20 +95,20 @@ class LLMProvider(Protocol):
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int = 4096,
     ) -> AsyncIterator[StreamChunk]:
-        """Streaming call. Yields StreamChunks; final chunk has is_final=True."""
+        """流式调用，产出 StreamChunk；最后一个块 is_final=True。 / Streaming call. Yields StreamChunks; final chunk has is_final=True."""
         ...
 
     def count_tokens(self, messages: list[Message], system: str = "") -> int:
-        """Approximate token count for context-window budget checks."""
+        """用于上下文窗口预算检查的近似 token 数。 / Approximate token count for context-window budget checks."""
         ...
 
 
-# ─── Error Classifier ─────────────────────────────────────────────────────────
+# ─── Error Classifier / 错误分类器 ───────────────────────────────────────────
 
 def classify_provider_error(exc: Exception) -> ProviderError:
     """
-    Normalize provider-specific exceptions into ProviderError.
-    Each concrete provider can call this and add its own pre-checks first.
+    将 provider 特定异常归一化为 ProviderError。 / Normalize provider-specific exceptions into ProviderError.
+    每个 provider 可调用此函数，并先加上自己的前置检查。 / Each concrete provider can call this and add its own pre-checks first.
     """
     msg = str(exc).lower()
 

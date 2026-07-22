@@ -9,34 +9,34 @@ from typing import Iterator
 from nanoharness.router.tiers import Tier
 
 
-# ─── 路由决策记录 ──────────────────────────────────────────────────────────────
+# ─── 路由决策记录 / Routing decision record ──────────────────────────────────────────────────────────────
 
 @dataclass
 class RouterDecision:
     trace_id: str
     session_key: str
-    input_preview: str       # 用户消息前 100 字符
+    input_preview: str       # 用户消息前 100 字符 / first 100 chars of user message
     tier: Tier
-    confidence: float        # 0.0 ~ 1.0，LLM 返回的置信度
-    reason: str              # LLM 的分类理由（一句话）
-    model_used: str          # 实际使用的模型 ID
-    method: str              # "llm" | "heuristic" | "fallback"
+    confidence: float        # 0.0 ~ 1.0，LLM 返回的置信度 / 0.0 ~ 1.0, confidence returned by LLM
+    reason: str              # LLM 的分类理由（一句话） / LLM classification reason (one line)
+    model_used: str          # 实际使用的模型 ID / model ID actually used
+    method: str              # "llm" | "heuristic" | "fallback" / classification method
     latency_ms: float = 0.0
     ts: float = field(default_factory=time.time)
 
 
-# ─── DecisionLog：SQLite 持久化 ────────────────────────────────────────────────
+# ─── DecisionLog：SQLite 持久化 / DecisionLog: SQLite persistence ────────────────────────────────────────────────
 
 class DecisionLog:
     """
-    路由决策的 append-only 持久化日志。
+    路由决策的 append-only 持久化日志。 / Append-only persistent log of routing decisions.
 
-    用途：
-    - 离线分析路由准确率（人工标注 + 对比真实输出质量）
-    - 计算 cost 节省数据（T0 vs T1 单价差 × 调用次数）
-    - Gradio 面板"路由决策可视化"的数据源
+    用途： / Use cases:
+    - 离线分析路由准确率（人工标注 + 对比真实输出质量） / - Offline routing accuracy analysis (manual labeling + comparing real output quality)
+    - 计算 cost 节省数据（T0 vs T1 单价差 × 调用次数） / - Compute cost savings (T0 vs T1 unit-price diff × call count)
+    - Gradio 面板"路由决策可视化"的数据源 / - Data source for the Gradio "routing decision visualization" panel
 
-    面试话术：
+    面试话术 / Interview talking point:
     "我把每次路由决策写入 SQLite，记录 tier / confidence / 分类理由 / 延迟。
     跑完 50 条测试集后可以出一张准确率报告和 cost 节省曲线，
     这是 LLM Router 设计合不合理的量化依据。"
@@ -99,8 +99,8 @@ class DecisionLog:
 
     def cost_savings_report(self) -> dict:
         """
-        统计各档位调用次数，估算相对 T1 全量调用的成本节省比例。
-        粗略假设：T0 成本 = T1 × 0.1，T2 = T1 × 3，T3 = T1 × 15。
+        统计各档位调用次数，估算相对 T1 全量调用的成本节省比例。 / Count calls per tier, estimate cost-savings ratio vs all-T1 baseline.
+        粗略假设：T0 成本 = T1 × 0.1，T2 = T1 × 3，T3 = T1 × 15。 / Rough assumption: T0 cost = T1 × 0.1, T2 = T1 × 3, T3 = T1 × 15.
         """
         RELATIVE_COST = {
             Tier.T0: 0.1,
@@ -134,8 +134,8 @@ class DecisionLog:
 
     @staticmethod
     def _row_to_decision(row: tuple) -> RouterDecision:
-        # id, trace_id, session_key, input_preview, tier, confidence,
-        # reason, model_used, method, latency_ms, ts
+        # id, trace_id, session_key, input_preview, tier, confidence, / 行字段顺序
+        # reason, model_used, method, latency_ms, ts / row field order
         return RouterDecision(
             trace_id=row[1],
             session_key=row[2],

@@ -22,31 +22,28 @@ log = logging.getLogger(__name__)
 
 class NanoCore:
     """
-    Hand-written ReAct state machine.
+    手写的 ReAct 状态机 / Hand-written ReAct state machine.
 
-    Single responsibility: drive the THINKING → TOOL_CALLING loop until the
-    model either produces a final answer or exceeds max_iter / max_tool_calls.
+    单一职责：驱动 THINKING → TOOL_CALLING 循环，直到模型产出最终答案或超过 max_iter / max_tool_calls / Single responsibility: drive the THINKING → TOOL_CALLING loop until the model either produces a final answer or exceeds max_iter / max_tool_calls.
 
-    All side-effects (memory, hooks, routing) live OUTSIDE this class and are
-    injected at construction time. NanoCore never imports from channels, memory,
-    or agents layers — only from core.* and provider.*.
+    所有副作用（记忆、钩子、路由）都位于本类之外，在构造时注入。NanoCore 绝不从 channels、memory 或 agents 层导入，只从 core.* 和 provider.* 导入 / All side-effects (memory, hooks, routing) live OUTSIDE this class and are injected at construction time. NanoCore never imports from channels, memory, or agents layers — only from core.* and provider.*.
 
-    Usage:
+    用法 / Usage:
         async for event in nano.run_turn("what's the weather?"):
             print(event)
     """
 
-    MAX_ITER = 20         # hard ceiling on ReAct iterations
-    MAX_TOOL_CALLS = 40   # separate ceiling on total tool invocations
-    TOOL_TIMEOUT = 30.0   # seconds before a single tool call is aborted
+    MAX_ITER = 20         # ReAct 迭代次数的硬上限 / hard ceiling on ReAct iterations
+    MAX_TOOL_CALLS = 40   # 工具调用总数的独立上限 / separate ceiling on total tool invocations
+    TOOL_TIMEOUT = 30.0   # 单次工具调用被中止前的秒数 / seconds before a single tool call is aborted
 
     def __init__(
         self,
         ctx: AgentContext,
         provider: LLMProvider,
-        tools: dict[str, Any],        # name → async callable
-        tool_definitions: list[dict[str, Any]],  # Anthropic tool_definitions format
-        compaction: Any | None = None, # CompactionEngine (injected, avoids circular import)
+        tools: dict[str, Any],        # 名称 → async 可调用对象 / name → async callable
+        tool_definitions: list[dict[str, Any]],  # Anthropic tool_definitions 格式 / Anthropic tool_definitions format
+        compaction: Any | None = None, # CompactionEngine（注入，避免循环导入） / CompactionEngine (injected, avoids circular import)
         event_store: Any | None = None,
         max_iter: int = MAX_ITER,
         max_tool_calls: int = MAX_TOOL_CALLS,
@@ -60,13 +57,13 @@ class NanoCore:
         self._max_iter = max_iter
         self._max_tool_calls = max_tool_calls
 
-    # ── Public entry point ────────────────────────────────────────────────────
+    # ── 公共入口 / Public entry point ────────────────────────────────────────
 
     async def run_turn(self, user_message: str) -> AsyncIterator[AgentEvent]:
         """
-        Async generator.  Yields AgentEvents as they occur.
-        Caller drives the generator; streaming text arrives as TextDeltaEvent.
-        Final event is always DoneEvent or ErrorEvent.
+        异步生成器，按发生顺序产出 AgentEvents / Async generator.  Yields AgentEvents as they occur.
+        调用方驱动生成器；流式文本以 TextDeltaEvent 到达 / Caller drives the generator; streaming text arrives as TextDeltaEvent.
+        最终事件总是 DoneEvent 或 ErrorEvent / Final event is always DoneEvent or ErrorEvent.
         """
         turn = TurnContext(
             session_key=self._ctx.session_key,
@@ -90,14 +87,14 @@ class NanoCore:
             self._emit(error_event)
             yield error_event
 
-    # ── ReAct loop ────────────────────────────────────────────────────────────
+    # ── ReAct 循环 / ReAct loop ───────────────────────────────────────────────
 
     async def _react_loop(self, turn: TurnContext) -> AsyncIterator[AgentEvent]:
         while turn.iterations < self._max_iter:
-            # ── THINKING ─────────────────────────────────────────────────────
+            # ── 思考 / THINKING ──────────────────────────────────────────────
             yield self._transition(turn, AgentState.THINKING)
 
-            # Preflight: compact if we're burning through the context window
+            # 预检：若正在耗尽上下文窗口则压缩 / Preflight: compact if we're burning through the context window
             if self._should_compact(turn):
                 async for ev in self._do_compact(turn):
                     yield ev
@@ -108,12 +105,12 @@ class NanoCore:
                 if isinstance(chunk_event, TextDeltaEvent):
                     final_text += chunk_event.delta
 
-            # _call_provider stores the response on turn; retrieve it
+            # _call_provider 把响应存在 turn 上，这里取回 / _call_provider stores the response on turn; retrieve it
             response = turn._last_response  # type: ignore[attr-defined]
             if response is None:
                 break
 
-            # ── TOOL CALLING ─────────────────────────────────────────────────
+            # ── 工具调用 / TOOL CALLING ───────────────────────────────────────
             if response.wants_tool_call:
                 if turn.tool_call_count >= self._max_tool_calls:
                     log.warning("max_tool_calls hit, forcing final answer")
@@ -136,9 +133,9 @@ class NanoCore:
                     content=tool_result_blocks,
                 ))
                 turn.iterations += 1
-                continue  # next iteration → THINKING with tool results in history
+                continue  # 下一轮迭代 → 带着工具结果进入 THINKING / next iteration → THINKING with tool results in history
 
-            # ── DONE — model produced final answer ───────────────────────────
+            # ── 完成 — 模型产出最终答案 / DONE — model produced final answer ────
             self._ctx.append_message(response.to_assistant_message())
             self._ctx.total_input_tokens += response.input_tokens
             self._ctx.total_output_tokens += response.output_tokens
@@ -158,10 +155,10 @@ class NanoCore:
             yield done
             return
 
-        # Fell out of loop — max_iter exceeded
+        # 跳出循环 — max_iter 超限 / Fell out of loop — max_iter exceeded
         yield self._force_done(turn, "max_iterations_exceeded")
 
-    # ── Provider call (streaming) ─────────────────────────────────────────────
+    # ── Provider 调用（流式） / Provider call (streaming) ─────────────────────
 
     async def _call_provider(self, turn: TurnContext) -> AsyncIterator[AgentEvent]:
         turn._last_response = None  # type: ignore[attr-defined]
@@ -188,16 +185,16 @@ class NanoCore:
 
         except ProviderError as exc:
             if exc.error_type == ProviderErrorType.CONTEXT_TOO_LONG and not turn.has_compacted:
-                # Emergency compaction — context window exceeded mid-call
+                # 紧急压缩 — 调用中上下文窗口超限 / Emergency compaction — context window exceeded mid-call
                 async for ev in self._do_compact(turn):
                     yield ev
-                # Retry once after compaction
+                # 压缩后重试一次 / Retry once after compaction
                 async for ev in self._call_provider(turn):
                     yield ev
             else:
                 raise
 
-    # ── Tool execution ────────────────────────────────────────────────────────
+    # ── 工具执行 / Tool execution ────────────────────────────────────────────
 
     async def _execute_tool(self, turn: TurnContext, tc: Any) -> AsyncIterator[AgentEvent]:
         import time
@@ -249,17 +246,17 @@ class NanoCore:
             latency_ms=latency,
             output_preview=output[:200],
         )
-        # stash full output on event so _make_tool_result_block can read it
+        # 把完整输出暂存在事件上，供 _make_tool_result_block 读取 / stash full output on event so _make_tool_result_block can read it
         result_ev._full_output = output  # type: ignore[attr-defined]
         self._emit(result_ev)
         yield result_ev
 
-    # ── Compaction ────────────────────────────────────────────────────────────
+    # ── 压缩 / Compaction ────────────────────────────────────────────────────
 
     def _should_compact(self, turn: TurnContext) -> bool:
         if turn.has_compacted or self._compaction is None:
             return False
-        # Trigger at 80% of the model's context window (estimated)
+        # 在模型上下文窗口的 80% 处触发（估算值） / Trigger at 80% of the model's context window (estimated)
         approx = self._ctx.approximate_token_count()
         limit = getattr(self._compaction, "context_window_limit", 180_000)
         return approx > limit * 0.80
@@ -283,7 +280,7 @@ class NanoCore:
         self._emit(ev)
         yield ev
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
+    # ── 辅助方法 / Helpers ───────────────────────────────────────────────────
 
     def _transition(self, turn: TurnContext, new_state: AgentState) -> StateChangeEvent:
         ev = StateChangeEvent(

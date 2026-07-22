@@ -24,16 +24,16 @@ import time
 from threading import Lock
 from typing import Any
 
-# 默认延迟分桶（秒），覆盖 10ms ~ 10s
+# 默认延迟分桶（秒），覆盖 10ms ~ 10s / Default latency buckets (seconds), covering 10ms ~ 10s
 _DEFAULT_BUCKETS = [
     0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
 ]
 
 
-# ─── 指标原语 ──────────────────────────────────────────────────────────────────
+# ─── 指标原语 / Metric primitives ────────────────────────────────────────────────
 
 class Counter:
-    """单调递增计数器，带标签维度。线程安全。"""
+    """单调递增计数器，带标签维度，线程安全 / Monotonically increasing counter with label dimensions, thread-safe."""
 
     def __init__(self, name: str, help_text: str, labelnames: tuple[str, ...] = ()) -> None:
         self.name = name
@@ -62,7 +62,7 @@ class Counter:
 
 
 class Gauge:
-    """可增可减的瞬时值，带标签维度。"""
+    """可增可减的瞬时值，带标签维度 / Instantaneous value that can increase or decrease, with label dimensions."""
 
     def __init__(self, name: str, help_text: str, labelnames: tuple[str, ...] = ()) -> None:
         self.name = name
@@ -92,11 +92,11 @@ class Gauge:
 
 class Histogram:
     """
-    分桶统计延迟分布，能算分位数（P50/P95/P99）。
+    分桶统计延迟分布，能算分位数（P50/P95/P99）/ Bucketed latency distribution, can compute quantiles (P50/P95/P99).
 
-    buckets: 上界列表（秒），如 [0.01, 0.05, 0.1, 0.5, 1.0]
-    每个观测值落入所有上界 ≥ 它的桶（累积分布，Prometheus 约定）。
-    同时保留全量样本用于精确分位数计算。
+    buckets: 上界列表（秒），如 [0.01, 0.05, 0.1, 0.5, 1.0] / Upper bound list (seconds), e.g. [0.01, 0.05, 0.1, 0.5, 1.0]
+    每个观测值落入所有上界 ≥ 它的桶（累积分布，Prometheus 约定）/ Each observation falls into all buckets whose upper bound ≥ it (cumulative distribution, Prometheus convention).
+    同时保留全量样本用于精确分位数计算 / Full samples also retained for exact quantile calculation.
     """
 
     def __init__(
@@ -108,12 +108,12 @@ class Histogram:
         self.help = help_text
         self.labelnames = labelnames
         self.buckets = sorted(buckets or _DEFAULT_BUCKETS)
-        # 每组标签：{bucket_upper: count, "_sum": total, "_count": n, "_values": 全量样本}
+        # 每组标签：{bucket_upper: count, "_sum": total, "_count": n, "_values": 全量样本} / Per label group: {bucket_upper: count, "_sum": total, "_count": n, "_values": full samples}
         self._data: dict[tuple, dict] = {}
         self._lock = Lock()
 
     def observe(self, value: float, **labels: Any) -> None:
-        """记录一个观测值（秒）。"""
+        """记录一个观测值（秒）/ Record an observation (seconds)."""
         key = self._label_key(labels)
         with self._lock:
             d = self._data.setdefault(key, {
@@ -128,7 +128,7 @@ class Histogram:
                     d[b] += 1
 
     def quantile(self, q: float, **labels: Any) -> float:
-        """算分位数（0~1）。用全量样本精确算。"""
+        """算分位数（0~1）。用全量样本精确算 / Compute quantile (0~1). Uses full samples for exact calculation."""
         key = self._label_key(labels)
         d = self._data.get(key)
         if not d or d["_count"] == 0:
@@ -138,7 +138,7 @@ class Histogram:
         return values[idx]
 
     def stats(self, **labels: Any) -> dict[str, float]:
-        """返回 count/mean/p50/p95/p99。"""
+        """返回 count/mean/p50/p95/p99 / Returns count/mean/p50/p95/p99."""
         key = self._label_key(labels)
         d = self._data.get(key)
         if not d or d["_count"] == 0:
@@ -155,13 +155,13 @@ class Histogram:
         return tuple(labels.get(n, "") for n in self.labelnames)
 
 
-# ─── MetricsCollector：四大黄金信号注册中心 ────────────────────────────────────
+# ─── MetricsCollector：四大黄金信号注册中心 / MetricsCollector: Four Golden Signals registry ────
 
 class MetricsCollector:
     """
-    全局指标采集器，注册项目用到的所有指标。
+    全局指标采集器，注册项目用到的所有指标 / Global metrics collector, registers all metrics used by the project.
 
-    用法：
+    用法 / Usage：
         m = get_metrics()
         m.observe_latency(0.35, model="haiku", kind="turn")
         m.inc_tokens(120, model="haiku", token_type="input")
@@ -169,38 +169,38 @@ class MetricsCollector:
     """
 
     def __init__(self) -> None:
-        # 延迟（黄金信号1）
+        # 延迟（黄金信号1）/ Latency (Golden Signal 1)
         self.latency = Histogram(
             "agent_response_latency_seconds",
             "Agent 响应延迟分布（秒）",
             labelnames=("kind", "model"),    # kind: turn/router/tool
         )
-        # 流量（黄金信号2）：token 用量
+        # 流量（黄金信号2）：token 用量 / Traffic (Golden Signal 2): token usage
         self.tokens = Counter(
             "agent_token_usage_total",
             "LLM token 总用量",
             labelnames=("model", "token_type"),   # token_type: input/output
         )
-        # 流量：工具调用次数
+        # 流量：工具调用次数 / Traffic: tool call count
         self.tool_calls = Counter(
             "agent_tool_calls_total",
             "工具调用总次数",
             labelnames=("tool_name", "status"),    # status: success/failed
         )
-        # 错误率（黄金信号3）
+        # 错误率（黄金信号3）/ Errors (Golden Signal 3)
         self.errors = Counter(
             "agent_errors_total",
             "Agent 错误总数",
             labelnames=("error_type",),
         )
-        # 饱和度（黄金信号4）：context window 利用率
+        # 饱和度（黄金信号4）：context window 利用率 / Saturation (Golden Signal 4): context window utilization
         self.context_util = Gauge(
             "context_window_utilization_ratio",
             "上下文窗口利用率（0~1）",
             labelnames=("session_key",),
         )
 
-    # ── 语义化便捷方法 ────────────────────────────────────────────────────────
+    # ── 语义化便捷方法 / Semantic convenience methods ────────────────────────────
 
     def observe_latency(self, seconds: float, kind: str = "turn", model: str = "") -> None:
         self.latency.observe(seconds, kind=kind, model=model)
@@ -217,13 +217,13 @@ class MetricsCollector:
     def observe_context_utilization(self, ratio: float, session_key: str = "") -> None:
         self.context_util.set(ratio, session_key=session_key)
 
-    # ── 汇总报告 ──────────────────────────────────────────────────────────────
+    # ── 汇总报告 / Summary reports ──────────────────────────────────────────────
 
     def latency_report(self, kind: str = "turn", model: str = "") -> dict[str, float]:
         return self.latency.stats(kind=kind, model=model)
 
     def token_report(self) -> dict[str, int]:
-        """按 model+type 汇总 token。"""
+        """按 model+type 汇总 token / Aggregate tokens by model+type."""
         out: dict[str, int] = {}
         for labels, val in self.tokens.samples():
             key = f"{labels.get('model', '')}/{labels.get('token_type', '')}"
@@ -231,19 +231,19 @@ class MetricsCollector:
         return out
 
     def error_rate(self) -> float:
-        """错误率 = errors / (errors + 成功工具调用)。"""
+        """错误率 = errors / (errors + 成功工具调用）/ Error rate = errors / (errors + successful tool calls)."""
         total_calls = sum(v for _, v in self.tool_calls.samples())
         total_errors = sum(v for _, v in self.errors.samples())
         denom = total_calls + total_errors
         return total_errors / denom if denom > 0 else 0.0
 
-    # ── Prometheus 格式导出 ───────────────────────────────────────────────────
+    # ── Prometheus 格式导出 / Prometheus format export ──────────────────────────
 
     def render_prometheus(self) -> str:
         """
-        输出标准 Prometheus exposition format 文本。
+        输出标准 Prometheus exposition format 文本 / Output standard Prometheus exposition format text.
 
-        接 Prometheus 只需把这个文本挂在 /metrics HTTP 端点。
+        接 Prometheus 只需把这个文本挂在 /metrics HTTP 端点 / To integrate with Prometheus, just mount this text at a /metrics HTTP endpoint.
         """
         lines: list[str] = []
 
@@ -280,7 +280,7 @@ class MetricsCollector:
         return "\n".join(lines) + "\n"
 
 
-# ─── 全局单例 ──────────────────────────────────────────────────────────────────
+# ─── 全局单例 / Global singleton ────────────────────────────────────────────────
 
 _metrics: MetricsCollector | None = None
 

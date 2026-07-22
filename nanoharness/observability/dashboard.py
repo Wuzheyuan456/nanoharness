@@ -34,7 +34,7 @@ from nanoharness.router.tiers import Tier
 
 
 def _span_tree_to_rows(node: dict[str, Any], depth: int = 0) -> list[list[str]]:
-    """把 Span 树递归展平成表格行（缩进表示层级）。"""
+    """把 Span 树递归展平成表格行（缩进表示层级）/ Recursively flatten Span tree into table rows (indentation indicates hierarchy)."""
     rows: list[list[str]] = []
     span = node.get("span")
     if span:
@@ -52,7 +52,7 @@ def _span_tree_to_rows(node: dict[str, Any], depth: int = 0) -> list[list[str]]:
 
 
 def _load_decisions(db_path: str) -> tuple[pd.DataFrame, dict]:
-    """从 SQLite 读路由决策，返回 DataFrame 和 cost 报告。"""
+    """从 SQLite 读路由决策，返回 DataFrame 和 cost 报告 / Read routing decisions from SQLite, return DataFrame and cost report."""
     db = DecisionLog(db_path)
     decisions = list(db.iter_all())
     report = db.cost_savings_report()
@@ -73,7 +73,7 @@ def _load_decisions(db_path: str) -> tuple[pd.DataFrame, dict]:
 
 
 def _tier_distribution_df(report: dict) -> pd.DataFrame:
-    """tier 分布 DataFrame，供 BarPlot。"""
+    """tier 分布 DataFrame，供 BarPlot / tier distribution DataFrame, for BarPlot."""
     breakdown = report.get("tier_breakdown", {})
     if not breakdown:
         return pd.DataFrame(columns=["tier", "count"])
@@ -87,7 +87,7 @@ def build_dashboard(
     tracer: Any = None,
     metrics: Any = None,
 ):
-    """构建 Gradio 面板（返回 Blocks，调用方 .launch()）。"""
+    """构建 Gradio 面板（返回 Blocks，调用方 .launch()）/ Build Gradio panel (returns Blocks, caller invokes .launch())."""
     import gradio as gr
 
     tracer = tracer or get_tracer()
@@ -96,7 +96,7 @@ def build_dashboard(
     with gr.Blocks(title="NanoHarness 可观测性面板") as demo:
         gr.Markdown("# NanoHarness 可观测性面板\n路由成本 / 链路回放 / 黄金信号")
 
-        # ── Tab1: 路由决策 ──────────────────────────────────────────────────
+        # ── Tab1: 路由决策 / Tab1: Routing decisions ────────────────────────
         with gr.Tab("路由决策"):
             with gr.Row():
                 refresh_router = gr.Button("刷新路由数据")
@@ -128,7 +128,7 @@ def build_dashboard(
             refresh_router.click(_refresh_router, outputs=[tier_plot, cost_text, decisions_table])
             demo.load(_refresh_router, outputs=[tier_plot, cost_text, decisions_table])
 
-        # ── Tab2: 链路回放 ──────────────────────────────────────────────────
+        # ── Tab2: 链路回放 / Tab2: Trace replay ────────────────────────────
         with gr.Tab("链路回放"):
             with gr.Row():
                 trace_dropdown = gr.Dropdown(
@@ -168,7 +168,7 @@ def build_dashboard(
                                    outputs=[span_tree, trace_info])
             demo.load(_refresh_traces, outputs=trace_dropdown)
 
-        # ── Tab3: 黄金信号 ──────────────────────────────────────────────────
+        # ── Tab3: 黄金信号 / Tab3: Golden signals ──────────────────────────
         with gr.Tab("黄金信号"):
             with gr.Row():
                 refresh_metrics = gr.Button("刷新指标")
@@ -202,7 +202,7 @@ def build_dashboard(
                     f"### 错误率（Errors）\n"
                     f"- 错误率: **{err_rate*100:.2f}%**"
                 )
-                # 饱和度：取所有 session 的 context_util 最大值
+                # 饱和度：取所有 session 的 context_util 最大值 / Saturation: take max context_util across all sessions
                 util_samples = metrics.context_util.samples()
                 max_util = max((v for _, v in util_samples), default=0.0)
                 util = (
@@ -226,7 +226,7 @@ def launch_dashboard(
     port: int = 7860,
     share: bool = False,
 ) -> None:
-    """启动 Gradio 面板。"""
+    """启动 Gradio 面板 / Launch Gradio panel."""
     demo = build_dashboard(decision_log_path=decision_log_path)
     demo.launch(server_port=port, share=share, show_error=True)
 

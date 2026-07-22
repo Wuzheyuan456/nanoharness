@@ -18,25 +18,25 @@ from nanoharness.provider.base import (
 
 class AnthropicProvider:
     """
-    Claude provider using the Anthropic Python SDK.
+    基于 Anthropic Python SDK 的 Claude provider。 / Claude provider using the Anthropic Python SDK.
 
-    Supports:
-      - Streaming and non-streaming completions
-      - tool_use / tool_result message format
-      - Extended thinking (T3 tier, budget_tokens > 0)
+    支持： / Supports:
+      - 流式与非流式补全 / Streaming and non-streaming completions
+      - tool_use / tool_result 消息格式 / tool_use / tool_result message format
+      - 扩展思考（T3 级，budget_tokens > 0） / Extended thinking (T3 tier, budget_tokens > 0)
     """
 
     def __init__(
         self,
         model_id: str = "claude-sonnet-4-6",
         api_key: str | None = None,
-        thinking_budget_tokens: int = 0,   # >0 enables extended thinking (T3 only)
+        thinking_budget_tokens: int = 0,   # >0 启用扩展思考（仅 T3） / >0 enables extended thinking (T3 only)
     ) -> None:
         self.model_id = model_id
         self._thinking_budget = thinking_budget_tokens
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
 
-    # ── Non-streaming ─────────────────────────────────────────────────────────
+    # ── 非流式 / Non-streaming ─────────────────────────────────────────────────────────
 
     async def complete(
         self,
@@ -53,7 +53,7 @@ class AnthropicProvider:
 
         return self._parse_response(resp)
 
-    # ── Streaming ─────────────────────────────────────────────────────────────
+    # ── 流式 / Streaming ─────────────────────────────────────────────────────────────
 
     async def stream(
         self,
@@ -70,17 +70,17 @@ class AnthropicProvider:
                     if chunk is not None:
                         yield chunk
 
-                # Final chunk with complete response
+                # 携带完整响应的最终块 / Final chunk with complete response
                 final = await stream_mgr.get_final_message()
                 yield StreamChunk(is_final=True, final_response=self._parse_response(final))
 
         except anthropic.APIError as exc:
             raise self._classify(exc) from exc
 
-    # ── Token counting ────────────────────────────────────────────────────────
+    # ── Token 计数 / Token counting ────────────────────────────────────────────────
 
     def count_tokens(self, messages: list[Message], system: str = "") -> int:
-        # Heuristic: Anthropic charges ~(chars / 4). Good enough for preflight checks.
+        # 启发式：Anthropic 计费约为 (字符数 / 4)。用于预检够用了。 / Heuristic: Anthropic charges ~(chars / 4). Good enough for preflight checks.
         total = len(system) // 4
         for m in messages:
             if m.token_count > 0:
@@ -91,7 +91,7 @@ class AnthropicProvider:
                 total += len(json.dumps(m.content)) // 4
         return total
 
-    # ── Internal helpers ──────────────────────────────────────────────────────
+    # ── 内部辅助 / Internal helpers ──────────────────────────────────────────────────
 
     def _build_kwargs(
         self,

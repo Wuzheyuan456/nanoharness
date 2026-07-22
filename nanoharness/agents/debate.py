@@ -15,7 +15,7 @@ from nanoharness.provider.base import LLMProvider
 
 log = logging.getLogger(__name__)
 
-# ─── 系统提示 ──────────────────────────────────────────────────────────────────
+# ─── 系统提示 / System prompts ─────────────────────────────────────────────────
 
 _REVIEWER_SYSTEM = """\
 你是一名经验丰富的代码审查工程师。请对提交的代码进行独立审查，重点关注：
@@ -47,27 +47,27 @@ _JUDGE_SYSTEM = """\
 """
 
 
-# ─── 数据模型 ──────────────────────────────────────────────────────────────────
+# ─── 数据模型 / Data models ──────────────────────────────────────────────────────
 
 @dataclass
 class ReviewOpinion:
-    """一个 Reviewer 的结构化审查意见。"""
-    reviewer_label: str                          # "A" 或 "B"
+    """一个 Reviewer 的结构化审查意见 / A single Reviewer's structured review opinion."""
+    reviewer_label: str                          # "A" 或 "B" / "A" or "B"
     issues: list[str] = field(default_factory=list)
     suggestions: list[str] = field(default_factory=list)
-    verdict: str = "request_changes"             # approve | request_changes | reject
-    raw_text: str = ""                           # LLM 原始输出（调试用）
+    verdict: str = "request_changes"             # approve | request_changes | reject / approve | request_changes | reject
+    raw_text: str = ""                           # LLM 原始输出（调试用）/ LLM raw output (for debugging)
 
 
 @dataclass
 class DebateResult:
-    """辩论模式代码审查的最终结果。"""
-    code_snippet: str                            # 被审查代码（截断存储）
+    """辩论模式代码审查的最终结果 / Final result of debate-mode code review."""
+    code_snippet: str                            # 被审查代码（截断存储）/ reviewed code (truncated for storage)
     reviewer_a: ReviewOpinion
     reviewer_b: ReviewOpinion
-    disagreements: list[str]                     # 两人分歧点列表
-    final_verdict: str                           # Judge 的最终裁定
-    final_report: str                            # Judge 的合并报告
+    disagreements: list[str]                     # 两人分歧点列表 / list of disagreement points between the two
+    final_verdict: str                           # Judge 的最终裁定 / Judge's final verdict
+    final_report: str                            # Judge 的合并报告 / Judge's merged report
     total_elapsed_ms: float
 
     @property
@@ -79,27 +79,27 @@ class DebateResult:
 
 class DebateOrchestrator:
     """
-    辩论模式代码审查编排器。
+    辩论模式代码审查编排器 / Debate-mode code review orchestrator.
 
-    流程：
+    流程 / Flow：
     1. 两个 Reviewer NanoCore 用 asyncio.gather 并行独立审查同一段代码
        （完全独立的 session_key 和 AgentContext，不共享任何历史）
     2. Judge NanoCore 收集两份意见，识别分歧，输出最终裁定
 
-    面试话术：
+    面试话术 / Interview talking point：
     "辩论模式的价值在于独立视角。如果两个 Reviewer 用同一个 session，
     第二个会受第一个历史的影响，本质上还是一次审查。
     我给他们完全独立的 session_key 和 AgentContext，真正的并行独立评估。
     Judge 的 prompt 明确说'这是两位不同工程师的意见'，
     它的工作是识别分歧，而不是取两者的平均值。
     如果两人都说 approve，Judge 基本会 approve；
-    如果一人 approve、一人 reject，Judge 要具体分析分歧在哪。"
+    如果一人 approve、一人 reject，Judge 要具体分析分歧在哪。 / The value of debate mode lies in independent perspectives. If two Reviewers share a session, the second would be influenced by the first's history—essentially still a single review. I give them completely independent session_keys and AgentContexts for genuine parallel independent evaluation. The Judge's prompt explicitly says 'these are opinions from two different engineers'; its job is to identify disagreements, not to average the two. If both say approve, the Judge basically approves; if one says approve and the other reject, the Judge analyzes where exactly the disagreement lies."
     """
 
     def __init__(
         self,
-        provider: LLMProvider,                    # Reviewer 使用的模型
-        judge_provider: LLMProvider | None = None, # Judge 可以用更强的模型（默认同 provider）
+        provider: LLMProvider,                    # Reviewer 使用的模型 / model used by the Reviewers
+        judge_provider: LLMProvider | None = None, # Judge 可以用更强的模型（默认同 provider）/ Judge may use a stronger model (defaults to the same provider)
         reviewer_system: str = _REVIEWER_SYSTEM,
         judge_system: str = _JUDGE_SYSTEM,
     ) -> None:
@@ -111,17 +111,17 @@ class DebateOrchestrator:
     async def review(
         self,
         code: str,
-        context: str = "",          # 可选背景描述：功能说明、修改目的等
+        context: str = "",          # 可选背景描述：功能说明、修改目的等 / optional background: feature description, modification intent, etc.
         session_prefix: str = "debate",
     ) -> DebateResult:
         """
-        主入口。并行跑两个 Reviewer，再交给 Judge 综合。
-        context 注入到 prompt 中帮助 Reviewer 理解代码意图。
+        主入口。并行跑两个 Reviewer，再交给 Judge 综合 / Main entry. Run two Reviewers in parallel, then hand off to the Judge for synthesis.
+        context 注入到 prompt 中帮助 Reviewer 理解代码意图 / context is injected into the prompt to help the Reviewer understand the code's intent.
         """
         t0 = time.monotonic()
         review_prompt = _build_review_prompt(code, context)
 
-        # 两个 Reviewer 完全并行，各自独立
+        # 两个 Reviewer 完全并行，各自独立 / Two Reviewers fully parallel, each independent
         opinion_a, opinion_b = await asyncio.gather(
             self._run_reviewer("A", review_prompt, session_prefix),
             self._run_reviewer("B", review_prompt, session_prefix),
@@ -132,7 +132,7 @@ class DebateOrchestrator:
             opinion_a.verdict == opinion_b.verdict,
         )
 
-        # Judge 综合两份意见
+        # Judge 综合两份意见 / Judge synthesizes the two opinions
         disagreements, verdict, report = await self._judge(
             review_prompt, opinion_a, opinion_b
         )
@@ -155,8 +155,8 @@ class DebateOrchestrator:
         review_prompt: str,
         session_prefix: str,
     ) -> ReviewOpinion:
-        """启动一个独立 Reviewer NanoCore，解析其 JSON 意见。"""
-        # 每个 Reviewer 独立 session，避免共享历史
+        """启动一个独立 Reviewer NanoCore，解析其 JSON 意见 / Spin up an independent Reviewer NanoCore and parse its JSON opinion."""
+        # 每个 Reviewer 独立 session，避免共享历史 / Each Reviewer gets an independent session, avoiding shared history
         session_key = f"{session_prefix}#reviewer-{label}-{uuid.uuid4().hex[:6]}"
         ctx = AgentContext(
             agent_id=f"reviewer-{label}",
@@ -184,7 +184,7 @@ class DebateOrchestrator:
         opinion_a: ReviewOpinion,
         opinion_b: ReviewOpinion,
     ) -> tuple[list[str], str, str]:
-        """Judge 综合两份意见，返回 (disagreements, final_verdict, final_report)。"""
+        """Judge 综合两份意见，返回 (disagreements, final_verdict, final_report) / Judge synthesizes the two opinions, returning (disagreements, final_verdict, final_report)."""
         judge_prompt = (
             f"被审查的代码：\n{review_prompt}\n\n"
             f"审查者 A 的意见：\n"
@@ -217,10 +217,10 @@ class DebateOrchestrator:
         return _parse_judge(raw_text, opinion_a, opinion_b)
 
 
-# ─── 解析函数（模块级，方便单独测试） ──────────────────────────────────────────
+# ─── 解析函数（模块级，方便单独测试）/ Parsing functions (module-level, for easy standalone testing) ──
 
 def _parse_opinion(label: str, raw_text: str) -> ReviewOpinion:
-    """从 LLM 输出解析 ReviewOpinion，JSON 解析失败时降级到原始文字。"""
+    """从 LLM 输出解析 ReviewOpinion，JSON 解析失败时降级到原始文字 / Parse a ReviewOpinion from the LLM output; on JSON parse failure, degrade to the raw text."""
     data = _parse_json(raw_text)
     if data:
         return ReviewOpinion(
@@ -230,7 +230,7 @@ def _parse_opinion(label: str, raw_text: str) -> ReviewOpinion:
             verdict=data.get("verdict", "request_changes"),
             raw_text=raw_text,
         )
-    # 降级：把原始文字当作唯一 issue
+    # 降级：把原始文字当作唯一 issue / Fallback: treat the raw text as the only issue
     return ReviewOpinion(
         reviewer_label=label,
         issues=[raw_text[:200]] if raw_text else ["审查失败，无输出"],
@@ -244,7 +244,7 @@ def _parse_judge(
     opinion_a: ReviewOpinion,
     opinion_b: ReviewOpinion,
 ) -> tuple[list[str], str, str]:
-    """解析 Judge 输出。JSON 解析失败时用规则合并两份意见。"""
+    """解析 Judge 输出。JSON 解析失败时用规则合并两份意见 / Parse the Judge output. On JSON parse failure, merge the two opinions with rules."""
     data = _parse_json(raw_text)
     if data:
         return (
@@ -253,8 +253,8 @@ def _parse_judge(
             data.get("final_report", raw_text[:500]),
         )
 
-    # 降级：规则合并
-    # 两人一致直接采用；有任意一人 reject 则 reject；否则 request_changes
+    # 降级：规则合并 / Fallback: rule-based merge
+    # 两人一致直接采用；有任意一人 reject 则 reject；否则 request_changes / If the two agree, adopt it directly; if either one rejects, reject; otherwise request_changes
     if opinion_a.verdict == opinion_b.verdict:
         merged_verdict = opinion_a.verdict
     elif "reject" in (opinion_a.verdict, opinion_b.verdict):
@@ -262,7 +262,7 @@ def _parse_judge(
     else:
         merged_verdict = "request_changes"
 
-    all_issues = list(dict.fromkeys(opinion_a.issues + opinion_b.issues))   # dedup 保序
+    all_issues = list(dict.fromkeys(opinion_a.issues + opinion_b.issues))   # dedup 保序 / dedup preserving order
     report = (
         f"共发现 {len(all_issues)} 个问题（A: {len(opinion_a.issues)} 条，"
         f"B: {len(opinion_b.issues)} 条）。最终裁定：{merged_verdict}。"
@@ -279,7 +279,7 @@ def _build_review_prompt(code: str, context: str) -> str:
 
 
 def _parse_json(text: str) -> dict | None:
-    """两步容错解析，保持项目内一致的 JSON 解析策略。"""
+    """两步容错解析，保持项目内一致的 JSON 解析策略 / Two-step fault-tolerant parsing, keeping a consistent JSON parsing strategy across the project."""
     if not text:
         return None
     try:

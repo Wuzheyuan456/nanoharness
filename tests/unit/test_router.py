@@ -1,6 +1,6 @@
 """
-Phase 2 单测：路由层 + TurnRunner 行为验证。
-全部使用 mock，不消耗真实 API quota。
+Phase 2 单测 / Phase 2 unit tests：路由层 + TurnRunner 行为验证。
+全部使用 mock，不消耗真实 API quota。 / All use mocks, no real API quota consumed.
 """
 from __future__ import annotations
 
@@ -16,10 +16,10 @@ from nanoharness.router.tiers import Tier, TierRegistry
 from nanoharness.provider.base import LLMResponse, StreamChunk
 
 
-# ─── 工具函数 ──────────────────────────────────────────────────────────────────
+# ─── 工具函数 / Utility functions ──────────────────────────────────────────────────────────────────
 
 def make_provider(final_text: str = "好的", tier_for_mock: str = "T1"):
-    """返回 mock provider，complete() 返回指定文本。"""
+    """返回 mock provider，complete() 返回指定文本。 / Returns a mock provider whose complete() returns the given text."""
     resp = LLMResponse(
         raw_content=[{"type": "text", "text": final_text}],
         stop_reason="end_turn",
@@ -48,10 +48,10 @@ def make_ctx(session_key: str = "sess-1") -> AgentContext:
     )
 
 
-# ─── 档位配置测试 ──────────────────────────────────────────────────────────────
+# ─── 档位配置测试 / Tier config tests ──────────────────────────────────────────────────────────────
 
 def test_tier_registry_defaults():
-    """默认档位配置完整，T0~T3 均有 model_id。"""
+    """默认档位配置完整，T0~T3 均有 model_id。 / Default tier config is complete; T0~T3 all have model_id."""
     reg = TierRegistry()
     for tier in Tier:
         cfg = reg.get(tier)
@@ -60,21 +60,21 @@ def test_tier_registry_defaults():
 
 
 def test_tier_registry_override():
-    """运行时覆盖模型 ID 生效。"""
+    """运行时覆盖模型 ID 生效。 / Runtime override of model ID takes effect."""
     reg = TierRegistry(overrides={"T0": {"model_id": "custom-haiku"}})
     assert reg.model_id(Tier.T0) == "custom-haiku"
-    # 其他档位不受影响
+    # 其他档位不受影响 / Other tiers unaffected
     assert reg.model_id(Tier.T1) == "claude-sonnet-4-6"
 
 
 def test_policy_hint_t3_nonempty():
-    """T3 档位有推理引导提示词，T0 为空。"""
+    """T3 档位有推理引导提示词，T0 为空。 / T3 tier has a reasoning-guidance prompt; T0 is empty."""
     reg = TierRegistry()
     assert reg.policy_hint(Tier.T0) == ""
     assert len(reg.policy_hint(Tier.T3)) > 0
 
 
-# ─── 规则启发式分类测试 ────────────────────────────────────────────────────────
+# ─── 规则启发式分类测试 / Heuristic classification tests ────────────────────────────────────────────────
 
 @pytest.mark.parametrize("msg,expected_tier", [
     ("你好，请问你是谁？", Tier.T0),
@@ -89,19 +89,19 @@ def test_heuristic_classify(msg, expected_tier):
 
 
 def test_heuristic_fallback():
-    """无关键词命中时返回 T1 fallback。"""
-    result = heuristic_classify("林子里的松鼠跑来跑去")  # 无任何规则关键词
+    """无关键词命中时返回 T1 fallback。 / Returns T1 fallback when no keyword matches."""
+    result = heuristic_classify("林子里的松鼠跑来跑去")  # 无任何规则关键词 / No rule keyword matches
     assert result.tier == Tier.T1
     assert result.method == "fallback"
 
 
-# ─── LLM 路由器测试 ────────────────────────────────────────────────────────────
+# ─── LLM 路由器测试 / LLM router tests ────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_llm_router_success():
-    """LLM 返回合法 JSON 时，classify() 正确解析档位。"""
+    """LLM 返回合法 JSON 时，classify() 正确解析档位。 / When LLM returns valid JSON, classify() parses the tier correctly."""
     provider = make_provider(final_text='{"tier": "T2", "confidence": 0.85, "reason": "需要复杂推理"}')
-    log = DecisionLog()  # in-memory
+    log = DecisionLog()  # in-memory / 内存版
     router = LLMRouter(provider=provider, decision_log=log)
 
     result = await router.classify("帮我分析这段代码", trace_id="t1", session_key="s1")
@@ -110,7 +110,7 @@ async def test_llm_router_success():
     assert result.confidence == pytest.approx(0.85)
     assert result.method == "llm"
 
-    # 决策已写入日志
+    # 决策已写入日志 / Decision has been written to the log
     decisions = log.query_by_session("s1")
     assert len(decisions) == 1
     assert decisions[0].tier == Tier.T2
@@ -118,9 +118,9 @@ async def test_llm_router_success():
 
 @pytest.mark.asyncio
 async def test_llm_router_timeout_fallback():
-    """LLM 超时时降级到规则分类，不抛异常。"""
+    """LLM 超时时降级到规则分类，不抛异常。 / On LLM timeout, degrades to heuristic classification without raising."""
     async def slow_complete(*a, **kw):
-        await asyncio.sleep(10)  # 远超 timeout
+        await asyncio.sleep(10)  # 远超 timeout / Far exceeds timeout
 
     provider = MagicMock()
     provider.complete = slow_complete
@@ -128,14 +128,14 @@ async def test_llm_router_timeout_fallback():
     router = LLMRouter(provider=provider, timeout=0.05)
     result = await router.classify("帮我写代码")
 
-    # 降级到 heuristic，T2（包含"写代码"关键词）
+    # 降级到 heuristic，T2（包含"写代码"关键词） / Degrades to heuristic, T2 (contains "写代码" keyword)
     assert result.tier == Tier.T2
     assert result.method == "heuristic"
 
 
 @pytest.mark.asyncio
 async def test_llm_router_bad_json_fallback():
-    """LLM 返回无效 JSON 时 fallback 到 T1，不崩溃。"""
+    """LLM 返回无效 JSON 时 fallback 到 T1，不崩溃。 / When LLM returns invalid JSON, falls back to T1 without crashing."""
     provider = make_provider(final_text="抱歉我无法分类这个请求")
     router = LLMRouter(provider=provider)
     result = await router.classify("随便说点什么")
@@ -144,10 +144,10 @@ async def test_llm_router_bad_json_fallback():
     assert result.method in ("fallback", "heuristic")
 
 
-# ─── DecisionLog 测试 ──────────────────────────────────────────────────────────
+# ─── DecisionLog 测试 / DecisionLog tests ──────────────────────────────────────────────────────────
 
 def test_decision_log_append_and_query():
-    """写入决策后可按 session 查询。"""
+    """写入决策后可按 session 查询。 / After appending decisions, they can be queried by session."""
     log = DecisionLog()
     log.append(RouterDecision(
         trace_id="t1", session_key="sess-a",
@@ -175,7 +175,7 @@ def test_decision_log_append_and_query():
 
 
 def test_cost_savings_report():
-    """成本节省报告：T0 调用多于 T1 时节省率为正。"""
+    """成本节省报告：T0 调用多于 T1 时节省率为正。 / Cost-savings report: savings rate is positive when T0 calls outnumber T1."""
     log = DecisionLog()
     for _ in range(8):
         log.append(RouterDecision(
@@ -193,13 +193,16 @@ def test_cost_savings_report():
     assert report["savings_pct"] > 0, "T0 占多数时应有成本节省"
 
 
-# ─── TurnRunner 并发串行化测试 ─────────────────────────────────────────────────
+# ─── TurnRunner 并发串行化测试 / TurnRunner concurrency serialization tests ─────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_turn_runner_serial_same_session():
     """
     同一 session 的两个并发请求必须串行执行（第一个完成后第二个才开始）。
     通过记录开始/结束时间验证无重叠。
+
+    Two concurrent requests on the same session must execute serially (the second starts only after the first completes).
+    Verified by recording start/end timestamps to assert no overlap.
     """
     from nanoharness.engine.turn_runner import TurnRunner
 
@@ -229,10 +232,10 @@ async def test_turn_runner_serial_same_session():
         async for _ in runner.run(ctx, "消息"):
             pass
 
-    # 并发启动两个请求
+    # 并发启动两个请求 / Launch two requests concurrently
     await asyncio.gather(run_one(ctx1), run_one(ctx2))
 
-    # 验证串行：必须是 start→end→start→end，不能是 start→start→...
+    # 验证串行：必须是 start→end→start→end，不能是 start→start→... / Verify serial: must be start→end→start→end, not start→start→...
     assert execution_log == ["start", "end", "start", "end"], \
         f"同一 session 应串行执行，实际顺序: {execution_log}"
 
@@ -241,6 +244,7 @@ async def test_turn_runner_serial_same_session():
 async def test_turn_runner_parallel_different_sessions():
     """
     不同 session 的请求可以并行执行，总耗时约等于单次耗时。
+    / Requests on different sessions can execute in parallel; total elapsed ≈ a single run.
     """
     from nanoharness.engine.turn_runner import TurnRunner
     import time
@@ -270,19 +274,19 @@ async def test_turn_runner_parallel_different_sessions():
     await asyncio.gather(run_one("session-A"), run_one("session-B"))
     elapsed = time.monotonic() - t0
 
-    # 两个不同 session 并行，总耗时应 < 0.15s（串行则需 0.1s×2 = 0.2s）
+    # 两个不同 session 并行，总耗时应 < 0.15s（串行则需 0.1s×2 = 0.2s） / Two different sessions in parallel, total elapsed should be < 0.15s (serial would be 0.1s×2 = 0.2s)
     assert elapsed < 0.15, f"不同 session 应并行执行，实际耗时: {elapsed:.3f}s"
 
 
 @pytest.mark.asyncio
 async def test_turn_runner_routes_to_correct_tier():
-    """TurnRunner 根据路由结果选择对应 provider。"""
+    """TurnRunner 根据路由结果选择对应 provider。 / TurnRunner selects the provider matching the routing result."""
     from nanoharness.engine.turn_runner import TurnRunner
 
     t0_provider = make_provider("T0回答", "T0")
     t1_provider = make_provider("T1回答", "T1")
 
-    # mock 路由器永远返回 T0
+    # mock 路由器永远返回 T0 / Mock router always returns T0
     mock_router = MagicMock()
     from nanoharness.router.llm_router import ClassifyResult
     mock_router.classify = AsyncMock(return_value=ClassifyResult(
@@ -299,5 +303,5 @@ async def test_turn_runner_routes_to_correct_tier():
         events.append(ev)
 
     done = next(e for e in events if isinstance(e, DoneEvent))
-    # T0 provider 的 model_id 是 mock-T0
+    # T0 provider 的 model_id 是 mock-T0 / T0 provider's model_id is mock-T0
     assert ctx.model_id == "mock-T0", f"应使用 T0 provider，实际 model_id={ctx.model_id}"

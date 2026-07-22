@@ -1,14 +1,15 @@
 """
-通道层单元测试。
+通道层单元测试 / Channel layer unit tests.
 
-测试策略：
-  - 用 FakeChannel / FakeBot 避免真实 Telegram/Discord 账号
-  - Telegram/Discord 的 parse_message 用 SimpleNamespace 伪造平台对象
-  - 超长分块用纯函数 _split_long_text 直接测
-  - LaneQueue 的并行性用 asyncio.sleep + wall-clock 计时断言
-  - Gateway 流水线：去重/安全/路由/分发各步独立断言
+测试策略 / Test strategy：
+  - 用 FakeChannel / FakeBot 避免真实 Telegram/Discord 账号 / Use FakeChannel / FakeBot to avoid real Telegram/Discord accounts
+  - Telegram/Discord 的 parse_message 用 SimpleNamespace 伪造平台对象 / parse_message for Telegram/Discord uses SimpleNamespace to fake platform objects
+  - 超长分块用纯函数 _split_long_text 直接测 / Test the pure function _split_long_text directly for long-message chunking
+  - LaneQueue 的并行性用 asyncio.sleep + wall-clock 计时断言 / LaneQueue parallelism asserted via asyncio.sleep + wall-clock timing
+  - Gateway 流水线：去重/安全/路由/分发各步独立断言 / Gateway pipeline: dedup/safety/routing/dispatch each asserted independently
 
 行为指纹风格：断言状态转换、返回值、副作用，不断言文本内容。
+/ Behavior-fingerprint style: assert state transitions, return values, side effects, not text content.
 """
 from __future__ import annotations
 
@@ -34,7 +35,7 @@ from nanoharness.channels.discord import DiscordChannel
 # ─── Fakes ────────────────────────────────────────────────────────────────────
 
 class FakeChannel:
-    """最小化的通道实现，用于 Gateway 测试。"""
+    """最小化的通道实现，用于 Gateway 测试。 / Minimal channel implementation for Gateway tests."""
     def __init__(self, channel_id: str = "fake") -> None:
         self.channel_id = channel_id
         self.sent: list[OutboundEnvelope] = []
@@ -55,7 +56,7 @@ class FakeChannel:
 
 
 class FakeBot:
-    """伪造 aiogram Bot，记录发送调用。"""
+    """伪造 aiogram Bot，记录发送调用。 / Fake aiogram Bot that records send calls."""
     def __init__(self) -> None:
         self.sent: list[dict] = []
 
@@ -66,7 +67,7 @@ class FakeBot:
 
 def make_telegram_dm(text: str, sender_id: int = 100,
                      bot_username: str = "nanobot") -> SimpleNamespace:
-    """伪造 aiogram 私聊 Message。"""
+    """伪造 aiogram 私聊 Message。 / Fake aiogram private-chat Message."""
     return SimpleNamespace(
         chat=SimpleNamespace(id=200, type="private"),
         from_user=SimpleNamespace(id=sender_id),
@@ -79,10 +80,10 @@ def make_telegram_dm(text: str, sender_id: int = 100,
 def make_telegram_group(text: str, sender_id: int = 100, chat_id: int = -300,
                         mentions_bot: bool = False,
                         bot_username: str = "nanobot") -> SimpleNamespace:
-    """伪造 aiogram 群聊 Message。"""
+    """伪造 aiogram 群聊 Message。 / Fake aiogram group-chat Message."""
     entities = []
     if mentions_bot and bot_username:
-        # 构造一个 mention entity 指向 bot
+        # 构造一个 mention entity 指向 bot / Build a mention entity pointing at the bot
         mention_text = f"@{bot_username}"
         offset = text.find(mention_text)
         if offset >= 0:
@@ -99,7 +100,7 @@ def make_telegram_group(text: str, sender_id: int = 100, chat_id: int = -300,
 
 
 def make_discord_dm(text: str, author_id: int = 100) -> SimpleNamespace:
-    """伪造 discord.py 私聊 Message。channel 类型用类名区分。"""
+    """伪造 discord.py 私聊 Message。channel 类型用类名区分。 / Fake discord.py private-chat Message; channel type distinguished by class name."""
     class DMChannel:
         def __init__(self) -> None:
             self.id = 200
@@ -116,7 +117,7 @@ def make_discord_dm(text: str, author_id: int = 100) -> SimpleNamespace:
 def make_discord_group(text: str, author_id: int = 100, channel_id: int = 300,
                        mentions_bot: bool = False,
                        bot_user_id: int = 999) -> SimpleNamespace:
-    """伪造 discord.py 群聊 Message。"""
+    """伪造 discord.py 群聊 Message。 / Fake discord.py group-chat Message."""
     class TextChannel:
         async def send(self, chunk: str) -> SimpleNamespace:
             self.last = SimpleNamespace(id=len(getattr(self, "sent", [])) + 1)
@@ -139,10 +140,10 @@ def make_discord_group(text: str, author_id: int = 100, channel_id: int = 300,
     )
 
 
-# ─── base.py: 信封结构 ──────────────────────────────────────────────────────
+# ─── base.py: 信封结构 / base.py: envelope structure ──────────────────────────────────────────────────────
 
 def test_inbound_envelope_auto_generates_id():
-    """未指定 envelope_id 时自动生成唯一 id。"""
+    """未指定 envelope_id 时自动生成唯一 id。 / When envelope_id is not specified, a unique id is auto-generated."""
     env1 = InboundEnvelope(channel_id="tg", sender_id="1", chat_id="1",
                            chat_type=ChatType.DIRECT, content="hi")
     env2 = InboundEnvelope(channel_id="tg", sender_id="2", chat_id="2",
@@ -152,22 +153,22 @@ def test_inbound_envelope_auto_generates_id():
 
 
 def test_inbound_envelope_frozen():
-    """信封是不可变的，保证并发安全。"""
+    """信封是不可变的，保证并发安全。 / Envelopes are immutable, ensuring concurrency safety."""
     env = InboundEnvelope(channel_id="tg", sender_id="1", chat_id="1", content="x")
     with pytest.raises(Exception):
         env.content = "changed"   # type: ignore[misc]
 
 
 def test_base_channel_protocol_checkable():
-    """FakeChannel 满足 BaseChannel Protocol。"""
+    """FakeChannel 满足 BaseChannel Protocol。 / FakeChannel satisfies the BaseChannel Protocol."""
     ch = FakeChannel()
     assert isinstance(ch, BaseChannel)
 
 
-# ─── router.py: 路由 ────────────────────────────────────────────────────────
+# ─── router.py: 路由 / router.py: routing ────────────────────────────────────────────────────────────────
 
 def test_router_resolves_default_when_no_rule():
-    """无规则匹配时返回 default_agent_id。"""
+    """无规则匹配时返回 default_agent_id。 / Returns default_agent_id when no rule matches."""
     router = ChannelRouter(default_agent_id="fallback")
     env = InboundEnvelope(channel_id="tg", sender_id="1", chat_id="1",
                           chat_type=ChatType.DIRECT, content="hi")
@@ -175,7 +176,7 @@ def test_router_resolves_default_when_no_rule():
 
 
 def test_router_priority_order():
-    """同条件多规则时，priority 高的胜出。"""
+    """同条件多规则时，priority 高的胜出。 / When multiple rules match the same condition, the higher priority wins."""
     router = ChannelRouter(default_agent_id="d")
     router.add_rule(BindingRule(agent_id="low", channel_id="tg", priority=1))
     router.add_rule(BindingRule(agent_id="high", channel_id="tg", priority=10))
@@ -185,21 +186,21 @@ def test_router_priority_order():
 
 
 def test_router_sender_pattern_regex():
-    """sender_pattern 用正则匹配特定用户。"""
+    """sender_pattern 用正则匹配特定用户。 / sender_pattern uses regex to match specific users."""
     router = ChannelRouter(default_agent_id="default")
     router.add_rule(BindingRule(agent_id="vip_agent", sender_pattern=r"^vip_\d+$"))
-    # 匹配
+    # 匹配 / Match
     env1 = InboundEnvelope(channel_id="tg", sender_id="vip_123", chat_id="1",
                            chat_type=ChatType.DIRECT, content="hi")
     assert router.resolve(env1) == "vip_agent"
-    # 不匹配 → default
+    # 不匹配 → default / No match → default
     env2 = InboundEnvelope(channel_id="tg", sender_id="user_456", chat_id="1",
                            chat_type=ChatType.DIRECT, content="hi")
     assert router.resolve(env2) == "default"
 
 
 def test_router_chat_type_filter():
-    """chat_type 过滤：只让私聊走某 agent。"""
+    """chat_type 过滤：只让私聊走某 agent。 / chat_type filter: only direct chats go to a certain agent."""
     router = ChannelRouter(default_agent_id="general")
     router.add_rule(BindingRule(
         agent_id="dm_only", chat_type=ChatType.DIRECT, channel_id="tg",
@@ -213,7 +214,7 @@ def test_router_chat_type_filter():
 
 
 def test_session_key_dm_vs_group():
-    """私聊按 sender_id 隔离，群聊按 chat_id 共享。"""
+    """私聊按 sender_id 隔离，群聊按 chat_id 共享。 / Direct chats are isolated by sender_id; group chats share by chat_id."""
     agent_id = "helper"
     dm_env = InboundEnvelope(channel_id="tg", sender_id="user_A", chat_id="user_A",
                              chat_type=ChatType.DIRECT, content="hi")
@@ -223,22 +224,22 @@ def test_session_key_dm_vs_group():
     dm_key = make_session_key(agent_id, dm_env)
     group_key = make_session_key(agent_id, group_env)
 
-    # 私聊 key 含 sender_id，群聊 key 含 chat_id
+    # 私聊 key 含 sender_id，群聊 key 含 chat_id / Direct-chat key contains sender_id; group-chat key contains chat_id
     assert "user_A" in dm_key
     assert "-100" in group_key
     assert dm_key != group_key
 
-    # 群里两个不同用户共享同一 session_key（这是 IM 群聊的标准语义）
+    # 群里两个不同用户共享同一 session_key（这是 IM 群聊的标准语义） / Two different users in a group share the same session_key (standard IM group semantics)
     user_b_group = InboundEnvelope(channel_id="tg", sender_id="user_B", chat_id="-100",
                                     chat_type=ChatType.GROUP, content="hi")
     assert make_session_key(agent_id, user_b_group) == group_key
 
 
-# ─── lane_queue.py: 车道隔离 ──────────────────────────────────────────────────
+# ─── lane_queue.py: 车道隔离 / lane_queue.py: lane isolation ──────────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_lane_queue_same_session_serial():
-    """同一 session_key 的任务串行执行。"""
+    """同一 session_key 的任务串行执行。 / Tasks with the same session_key execute serially."""
     queue = LaneQueue()
     order: list[str] = []
 
@@ -247,18 +248,18 @@ async def test_lane_queue_same_session_serial():
         order.append(name)
         return name
 
-    # 同一 session 并发投递两个任务，按投递顺序完成
+    # 同一 session 并发投递两个任务，按投递顺序完成 / Concurrently dispatch two tasks on the same session; they complete in dispatch order
     await asyncio.gather(
         queue.dispatch("sess-1", lambda: task("first", 0.05)),
         queue.dispatch("sess-1", lambda: task("second", 0.01)),
     )
-    # 串行：first 先完成（即使 delay 更长），因为 second 要等 first 释放锁
+    # 串行：first 先完成（即使 delay 更长），因为 second 要等 first 释放锁 / Serial: first completes first (even with a longer delay), because second waits for first to release the lock
     assert order == ["first", "second"]
 
 
 @pytest.mark.asyncio
 async def test_lane_queue_different_sessions_parallel():
-    """不同 session_key 的任务并行执行，wall-clock 接近 max 而非 sum。"""
+    """不同 session_key 的任务并行执行，wall-clock 接近 max 而非 sum。 / Tasks with different session_keys execute in parallel; wall-clock approaches max rather than sum."""
     queue = LaneQueue()
 
     async def task(delay: float):
@@ -271,19 +272,19 @@ async def test_lane_queue_different_sessions_parallel():
         queue.dispatch("sess-B", lambda: task(0.05)),
     )
     elapsed = time.monotonic() - t0
-    # 并行：总耗时接近 0.05s，串行则要 0.10s。留 0.04s buffer。
+    # 并行：总耗时接近 0.05s，串行则要 0.10s。留 0.04s buffer。 / Parallel: total elapsed ≈ 0.05s; serial would be 0.10s. Leave a 0.04s buffer.
     assert elapsed < 0.09, f"疑似串行执行，耗时={elapsed:.3f}s"
 
 
 @pytest.mark.asyncio
 async def test_lane_queue_reentrancy_no_deadlock():
-    """重入场景：同链路内再次 dispatch 同 session 不死锁。"""
+    """重入场景：同链路内再次 dispatch 同 session 不死锁。 / Reentrant scenario: re-dispatching the same session within a chain does not deadlock."""
     queue = LaneQueue()
     log: list[str] = []
 
     async def outer():
         log.append("outer-start")
-        # 在持有锁的情况下，再次 dispatch 同一 session
+        # 在持有锁的情况下，再次 dispatch 同一 session / While holding the lock, dispatch the same session again
         inner_result = await queue.dispatch("sess-1", inner)
         log.append(f"outer-end inner={inner_result}")
 
@@ -292,36 +293,36 @@ async def test_lane_queue_reentrancy_no_deadlock():
         return "inner-done"
 
     await queue.dispatch("sess-1", outer)
-    # 如果没重入检测，outer 会死锁等自己释放锁
+    # 如果没重入检测，outer 会死锁等自己释放锁 / Without reentrancy detection, outer would deadlock waiting for itself to release the lock
     assert log == ["outer-start", "inner", "outer-end inner=inner-done"]
 
 
-# ─── gateway.py: 流水线 ───────────────────────────────────────────────────────
+# ─── gateway.py: 流水线 / gateway.py: pipeline ───────────────────────────────────────────────────────────────
 
 def test_dedup_window_drops_duplicate():
-    """相同 envelope_id 第二次进来被去重。"""
+    """相同 envelope_id 第二次进来被去重。 / The same envelope_id is deduplicated on its second arrival."""
     win = DedupWindow(capacity=10)
     assert win.check("env-1").duplicate is False
-    assert win.check("env-1").duplicate is True   # 第二次命中
+    assert win.check("env-1").duplicate is True   # 第二次命中 / Second hit
     assert win.check("env-2").duplicate is False
 
 
 def test_dedup_window_lru_eviction():
-    """超容量时按 LRU 淘汰最久未访问的条目。"""
+    """超容量时按 LRU 淘汰最久未访问的条目。 / On overflow, evicts the least-recently-accessed entry by LRU."""
     win = DedupWindow(capacity=2)
     win.check("env-1")
     win.check("env-2")
-    win.check("env-3")   # 容量 2，env-1 被淘汰（最老）
-    # env-1 现在又算"新"的
+    win.check("env-3")   # 容量 2，env-1 被淘汰（最老） / Capacity 2, env-1 is evicted (oldest)
+    # env-1 现在又算"新"的 / env-1 is now considered "new" again
     assert win.check("env-1").duplicate is False
-    # 重新加入 env-1 后，最老的 env-2 被淘汰；env-3（最近访问）还在
+    # 重新加入 env-1 后，最老的 env-2 被淘汰；env-3（最近访问）还在 / After re-adding env-1, the oldest env-2 is evicted; env-3 (most recent) remains
     assert win.check("env-3").duplicate is True
-    assert win.check("env-2").duplicate is False   # 已被淘汰
+    assert win.check("env-2").duplicate is False   # 已被淘汰 / Already evicted
 
 
 @pytest.mark.asyncio
 async def test_gateway_dedup_drops_second_message():
-    """Gateway 对重复 envelope_id 只处理一次。"""
+    """Gateway 对重复 envelope_id 只处理一次。 / Gateway processes a duplicate envelope_id only once."""
     ch = FakeChannel()
     gw = Gateway(router=ChannelRouter(default_agent_id="a"))
     gw.register_channel(ch)
@@ -342,7 +343,7 @@ async def test_gateway_dedup_drops_second_message():
         chat_type=ChatType.DIRECT, content="hi",
     )
     await gw.handle_inbound(env)
-    await gw.handle_inbound(env)   # 重复
+    await gw.handle_inbound(env)   # 重复 / Duplicate
 
     assert call_count == 1
     assert len(ch.sent) == 1
@@ -350,24 +351,24 @@ async def test_gateway_dedup_drops_second_message():
 
 @pytest.mark.asyncio
 async def test_gateway_safety_group_require_mention():
-    """群聊默认要求 @机器人，没 @ 的消息被拦截。"""
+    """群聊默认要求 @机器人，没 @ 的消息被拦截。 / Group chats require @bot by default; messages without @ are blocked."""
     ch = FakeChannel()
     gw = Gateway(router=ChannelRouter(default_agent_id="a"))
     gw.register_channel(ch)
     gw.set_handler(lambda env: _async_return(None))
 
-    # 群聊但 mentions_bot=False
+    # 群聊但 mentions_bot=False / Group chat but mentions_bot=False
     env = InboundEnvelope(
         channel_id="fake", sender_id="u1", chat_id="-1",
         chat_type=ChatType.GROUP, content="hi", mentions_bot=False,
     )
     result = await gw.handle_inbound(env)
-    assert result is None   # 被安全门控拦截
+    assert result is None   # 被安全门控拦截 / Blocked by the safety gate
 
 
 @pytest.mark.asyncio
 async def test_gateway_safety_group_with_mention_passes():
-    """群聊且 @了机器人 → 正常处理并回复。"""
+    """群聊且 @了机器人 → 正常处理并回复。 / Group chat with @bot → handled normally and a reply is sent."""
     ch = FakeChannel()
     gw = Gateway(router=ChannelRouter(default_agent_id="a"))
     gw.register_channel(ch)
@@ -390,7 +391,7 @@ async def test_gateway_safety_group_with_mention_passes():
 
 @pytest.mark.asyncio
 async def test_gateway_safety_blocked_sender():
-    """黑名单发送者被拦截。"""
+    """黑名单发送者被拦截。 / Blocked senders are intercepted."""
     gw = Gateway(
         router=ChannelRouter(default_agent_id="a"),
         safety=SafetyPolicy(blocked_senders={"bad-user"}),
@@ -408,7 +409,7 @@ async def test_gateway_safety_blocked_sender():
 
 @pytest.mark.asyncio
 async def test_gateway_safety_whitelist():
-    """白名单非空时，仅白名单用户放行。"""
+    """白名单非空时，仅白名单用户放行。 / When the whitelist is non-empty, only whitelisted users are allowed."""
     gw = Gateway(
         router=ChannelRouter(default_agent_id="a"),
         safety=SafetyPolicy(allowed_senders={"vip"}),
@@ -416,19 +417,19 @@ async def test_gateway_safety_whitelist():
     gw.register_channel(FakeChannel())
     gw.set_handler(lambda env: _async_return(None))
 
-    # 非白名单 → 拦截
+    # 非白名单 → 拦截 / Not whitelisted → blocked
     blocked = InboundEnvelope(
         channel_id="fake", sender_id="outsider", chat_id="1",
         chat_type=ChatType.DIRECT, content="hi",
     )
     assert await gw.handle_inbound(blocked) is None
 
-    # 白名单 → 放行（handler 返回 None，所以结果也是 None，但没被拦截）
+    # 白名单 → 放行（handler 返回 None，所以结果也是 None，但没被拦截） / Whitelisted → allowed (handler returns None, so the result is also None, but it was not blocked)
     allowed = InboundEnvelope(
         channel_id="fake", sender_id="vip", chat_id="1",
         chat_type=ChatType.DIRECT, content="hi",
     )
-    # 用 dedup_size 间接验证：放行的消息进了 handler，去重窗口 +1
+    # 用 dedup_size 间接验证：放行的消息进了 handler，去重窗口 +1 / Verify indirectly via dedup_size: the allowed message reached the handler, so the dedup window +1
     before = gw.dedup_size
     await gw.handle_inbound(allowed)
     after = gw.dedup_size
@@ -437,7 +438,7 @@ async def test_gateway_safety_whitelist():
 
 @pytest.mark.asyncio
 async def test_gateway_routes_to_session_and_serializes():
-    """Gateway 通过 router 决定 agent，按 session_key 走车道。"""
+    """Gateway 通过 router 决定 agent，按 session_key 走车道。 / Gateway decides the agent via router and uses the lane keyed by session_key."""
     router = ChannelRouter(default_agent_id="default")
     router.add_rule(BindingRule(agent_id="vip_agent", sender_pattern="^vip"))
     gw = Gateway(router=router)
@@ -451,13 +452,13 @@ async def test_gateway_routes_to_session_and_serializes():
 
     gw.set_handler(handler)
 
-    # vip 用户 → vip_agent，session_key 含 agent_id "vip_agent"
+    # vip 用户 → vip_agent，session_key 含 agent_id "vip_agent" / vip user → vip_agent; session_key contains agent_id "vip_agent"
     env = InboundEnvelope(
         channel_id="fake", sender_id="vip_1", chat_id="vip_1",
         chat_type=ChatType.DIRECT, content="hi",
     )
     await gw.handle_inbound(env)
-    # 普通用户 → default agent
+    # 普通用户 → default agent / Regular user → default agent
     env2 = InboundEnvelope(
         channel_id="fake", sender_id="user_2", chat_id="user_2",
         chat_type=ChatType.DIRECT, content="hi",
@@ -469,17 +470,17 @@ async def test_gateway_routes_to_session_and_serializes():
 
 @pytest.mark.asyncio
 async def test_gateway_register_duplicate_channel_raises():
-    """重复注册同 channel_id 报错。"""
+    """重复注册同 channel_id 报错。 / Registering a duplicate channel_id raises."""
     gw = Gateway(router=ChannelRouter())
     gw.register_channel(FakeChannel(channel_id="tg"))
     with pytest.raises(ValueError):
         gw.register_channel(FakeChannel(channel_id="tg"))
 
 
-# ─── telegram.py: parse_message + 分块 ───────────────────────────────────────
+# ─── telegram.py: parse_message + 分块 / telegram.py: parse_message + chunking ───────────────────────────────────────
 
 def test_telegram_parse_dm():
-    """私聊 message 解析为 DIRECT，mentions_bot=False。"""
+    """私聊 message 解析为 DIRECT，mentions_bot=False。 / A private-chat message parses to DIRECT with mentions_bot=False."""
     bot = FakeBot()
     ch = TelegramChannel(bot=bot, bot_username="nanobot")
     msg = make_telegram_dm("你好", sender_id=42)
@@ -494,7 +495,7 @@ def test_telegram_parse_dm():
 
 
 def test_telegram_parse_group_with_mention():
-    """群聊 + @bot → mentions_bot=True。"""
+    """群聊 + @bot → mentions_bot=True。 / Group chat + @bot → mentions_bot=True."""
     bot = FakeBot()
     ch = TelegramChannel(bot=bot, bot_username="nanobot")
     msg = make_telegram_group(
@@ -506,7 +507,7 @@ def test_telegram_parse_group_with_mention():
 
 
 def test_telegram_parse_group_without_mention():
-    """群聊没 @bot → mentions_bot=False。"""
+    """群聊没 @bot → mentions_bot=False。 / Group chat without @bot → mentions_bot=False."""
     bot = FakeBot()
     ch = TelegramChannel(bot=bot, bot_username="nanobot")
     msg = make_telegram_group("今天天气不错", mentions_bot=False)
@@ -516,7 +517,7 @@ def test_telegram_parse_group_without_mention():
 
 @pytest.mark.asyncio
 async def test_telegram_send_short_message():
-    """短消息一次发送，返回 SENT。"""
+    """短消息一次发送，返回 SENT。 / A short message is sent in one shot and returns SENT."""
     bot = FakeBot()
     ch = TelegramChannel(bot=bot, bot_username="nb")
     env = OutboundEnvelope(target_channel="telegram", target_peer="200", content="hello")
@@ -528,45 +529,45 @@ async def test_telegram_send_short_message():
 
 @pytest.mark.asyncio
 async def test_telegram_send_long_message_chunked():
-    """超长消息分块发送，每块 ≤ 4096。"""
+    """超长消息分块发送，每块 ≤ 4096。 / Overlong messages are sent in chunks, each ≤ 4096."""
     bot = FakeBot()
     ch = TelegramChannel(bot=bot, bot_username="nb")
-    # 5000 字符，需要分 2 块
+    # 5000 字符，需要分 2 块 / 5000 chars, needs to be split into 2 chunks
     long_text = "a" * 5000
     env = OutboundEnvelope(target_channel="telegram", target_peer="200", content=long_text)
     result = await ch.send(env)
 
     assert result.status == SendStatus.SENT
     assert len(bot.sent) == 2
-    # 每块不超限
+    # 每块不超限 / Each chunk is within the limit
     assert all(len(s["text"]) <= 4096 for s in bot.sent)
-    # 拼起来等于原文
+    # 拼起来等于原文 / Concatenated equals the original
     assert "".join(s["text"] for s in bot.sent) == long_text
 
 
 def test_split_long_text_prefers_newline_cut():
-    """分块优先在换行处切，不切断句子。"""
-    # 第 10 字符是换行，max_len=15 时应在换行处切
+    """分块优先在换行处切，不切断句子。 / Chunking prefers to cut at newlines, not mid-sentence."""
+    # 第 10 字符是换行，max_len=15 时应在换行处切 / The 10th char is a newline; with max_len=15 it should cut at the newline
     text = "第一行\n第二行\n第三行"
     chunks = _split_long_text(text, max_len=10)
     assert len(chunks) >= 2
-    # 每块都不超限
+    # 每块都不超限 / Each chunk is within the limit
     assert all(len(c) <= 10 for c in chunks)
-    # 拼接还原（去掉切点处的换行后可能不完全等，这里只验证内容片段都在）
+    # 拼接还原（去掉切点处的换行后可能不完全等，这里只验证内容片段都在） / Concatenation restores (may not be exactly equal after dropping newlines at cut points; here we only verify the content fragments are present)
     joined = "".join(chunks)
     assert "第一行" in joined
     assert "第三行" in joined
 
 
 def test_split_long_text_short_returns_single():
-    """短于上限的文本返回单块。"""
+    """短于上限的文本返回单块。 / Text shorter than the limit returns a single chunk."""
     assert _split_long_text("hi", max_len=100) == ["hi"]
 
 
-# ─── discord.py: parse_message ────────────────────────────────────────────────
+# ─── discord.py: parse_message ────────────────────────────────────────────────────────────────
 
 def test_discord_parse_dm():
-    """私聊解析为 DIRECT。"""
+    """私聊解析为 DIRECT。 / A private chat parses to DIRECT."""
     client = SimpleNamespace()
     ch = DiscordChannel(client=client, bot_user_id=999)
     msg = make_discord_dm("hi", author_id=42)
@@ -579,7 +580,7 @@ def test_discord_parse_dm():
 
 
 def test_discord_parse_group_with_mention():
-    """群聊 + @bot → mentions_bot=True。"""
+    """群聊 + @bot → mentions_bot=True。 / Group chat + @bot → mentions_bot=True."""
     ch = DiscordChannel(client=SimpleNamespace(), bot_user_id=999)
     msg = make_discord_group("@bot hi", author_id=42, mentions_bot=True)
     env = ch.parse_message(msg)
@@ -587,8 +588,8 @@ def test_discord_parse_group_with_mention():
     assert env.mentions_bot is True
 
 
-# ─── 辅助 ────────────────────────────────────────────────────────────────────
+# ─── 辅助 / Helpers ────────────────────────────────────────────────────────────────────────────
 
 async def _async_return(value):
-    """返回固定值的 async handler，用于不需要实际处理的测试。"""
+    """返回固定值的 async handler，用于不需要实际处理的测试。 / An async handler returning a fixed value, for tests that need no real handling."""
     return value

@@ -13,33 +13,33 @@ from nanoharness.router.tiers import DEFAULT_TIER_CONFIGS, Tier, TierRegistry
 
 log = logging.getLogger(__name__)
 
-# ─── 分类结果 ──────────────────────────────────────────────────────────────────
+# ─── 分类结果 / Classification result ──────────────────────────────────────────────────────────────────
 
 @dataclass
 class ClassifyResult:
     tier: Tier
-    confidence: float    # 0.0 ~ 1.0
+    confidence: float    # 0.0 ~ 1.0 / 置信度
     reason: str
-    method: str          # "llm" | "heuristic" | "fallback"
+    method: str          # "llm" | "heuristic" | "fallback" / 分类方法
     latency_ms: float = 0.0
 
 
-# ─── 规则启发式降级 ────────────────────────────────────────────────────────────
+# ─── 规则启发式降级 / Rule-based heuristic fallback ────────────────────────────────────────────────────────────
 
-# 关键词 → 档位，从高到低匹配，第一个命中的优先
+# 关键词 → 档位，从高到低匹配，第一个命中的优先 / keyword → tier, match high-to-low, first hit wins
 _HEURISTIC_RULES: list[tuple[list[str], Tier]] = [
-    # T3 特征：风险、决策、大型代码重构、需要深度推理
+    # T3 特征：风险、决策、大型代码重构、需要深度推理 / T3 traits: risk, decision, large refactor, deep reasoning
     (["重构", "架构设计", "安全漏洞", "重大决策", "生产事故", "refactor", "architecture"], Tier.T3),
-    # T2 特征：代码生成、多步骤分析、长文档
+    # T2 特征：代码生成、多步骤分析、长文档 / T2 traits: codegen, multi-step analysis, long docs
     (["写代码", "实现", "生成", "分析", "比较", "code", "implement", "analyze"], Tier.T2),
-    # T0 特征：打招呼、简单查询、是/否问题
+    # T0 特征：打招呼、简单查询、是/否问题 / T0 traits: greeting, simple query, yes/no
     (["你好", "hello", "hi", "谢谢", "thanks", "几点", "今天", "天气", "是不是", "对吗"], Tier.T0),
 ]
 
 
 def heuristic_classify(message: str) -> ClassifyResult:
     """
-    基于关键词的快速规则分类，作为 LLM 分类的降级兜底。
+    基于关键词的快速规则分类，作为 LLM 分类的降级兜底。 / Fast keyword-based rule classifier, used as LLM fallback.
     """
     msg_lower = message.lower()
     for keywords, tier in _HEURISTIC_RULES:
@@ -58,9 +58,9 @@ def heuristic_classify(message: str) -> ClassifyResult:
     )
 
 
-# ─── LLM 路由器 ────────────────────────────────────────────────────────────────
+# ─── LLM 路由器 / LLM router ────────────────────────────────────────────────────────────────
 
-# 发给分类 LLM 的 system prompt，要求严格输出 JSON
+# 发给分类 LLM 的 system prompt，要求严格输出 JSON / system prompt for classifier LLM, strict JSON output
 _CLASSIFIER_SYSTEM = """\
 你是一个任务难度分类器。根据用户消息，判断处理该任务需要的模型档位，输出 JSON。
 
@@ -77,14 +77,14 @@ _CLASSIFIER_SYSTEM = """\
 
 class LLMRouter:
     """
-    基于一次 T0 级别 LLM call 的任务难度分类器。
+    基于一次 T0 级别 LLM call 的任务难度分类器。 / Task-difficulty classifier based on a single T0 LLM call.
 
-    降级链（按优先级）：
-    1. LLM 分类（claude-haiku，~200ms，成本极低）
-    2. 超时 → 规则启发式（关键词匹配，<1ms）
-    3. 解析失败 → fallback T1
+    降级链（按优先级）： / Fallback chain (by priority):
+    1. LLM 分类（claude-haiku，~200ms，成本极低） / 1. LLM classify (claude-haiku, ~200ms, very low cost)
+    2. 超时 → 规则启发式（关键词匹配，<1ms） / 2. Timeout → rule heuristic (keyword match, <1ms)
+    3. 解析失败 → fallback T1 / 3. Parse failure → fallback T1
 
-    面试话术：
+    面试话术 / Interview talking point:
     "我没有用 opensquilla 那种本地 ONNX 模型，原因是 BGE 模型需要 Git LFS
     依赖，部署门槛高。我的方案是用 Haiku 做一次分类调用，成本约 $0.00005，
     延迟约 200ms，换来零依赖、可解释的分类理由。这是一个刻意的工程取舍。"
@@ -92,10 +92,10 @@ class LLMRouter:
 
     def __init__(
         self,
-        provider: object,                    # LLMProvider，用 T0 模型
+        provider: object,                    # LLMProvider，用 T0 模型 / LLMProvider, uses T0 model
         registry: TierRegistry | None = None,
         decision_log: DecisionLog | None = None,
-        timeout: float = 2.0,                # 超时后降级到 heuristic
+        timeout: float = 2.0,                # 超时后降级到 heuristic / degrade to heuristic after timeout
     ) -> None:
         self._provider = provider
         self._registry = registry or TierRegistry()
@@ -109,8 +109,8 @@ class LLMRouter:
         session_key: str = "",
     ) -> ClassifyResult:
         """
-        输入用户消息，返回 ClassifyResult。
-        无论 LLM 是否成功，都保证返回一个有效结果。
+        输入用户消息，返回 ClassifyResult。 / Take user message, return ClassifyResult.
+        无论 LLM 是否成功，都保证返回一个有效结果。 / Always returns a valid result regardless of LLM success.
         """
         t0 = time.monotonic()
         result = await self._try_llm_classify(message)
@@ -154,12 +154,12 @@ class LLMRouter:
     @staticmethod
     def _parse_response(text: str) -> ClassifyResult:
         """
-        解析 LLM 返回的 JSON。
+        解析 LLM 返回的 JSON。 / Parse JSON returned by the LLM.
 
-        容错策略：
-        - 先 json.loads 整段文本
-        - 失败则用正则提取第一个 {...} 块
-        - 再失败则 fallback T1（method="fallback"）
+        容错策略： / Fault-tolerance strategy:
+        - 先 json.loads 整段文本 / - First json.loads the whole text
+        - 失败则用正则提取第一个 {...} 块 / - On failure, regex-extract the first {...} block
+        - 再失败则 fallback T1（method="fallback"） / - If still failing, fallback T1 (method="fallback")
         """
         def _extract(raw: str) -> dict | None:
             try:
@@ -172,7 +172,7 @@ class LLMRouter:
                     return json.loads(m.group())
                 except json.JSONDecodeError:
                     pass
-            return None  # 明确返回 None 表示解析完全失败
+            return None  # 明确返回 None 表示解析完全失败 / explicitly return None meaning parse fully failed
 
         data = _extract(text)
         if data is None:

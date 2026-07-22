@@ -28,21 +28,21 @@ from nanoharness.channels.base import ChatType, InboundEnvelope
 @dataclass(frozen=True)
 class BindingRule:
     """
-    声明式绑定规则。所有字段可选，None 表示"匹配任意"。
+    声明式绑定规则。所有字段可选，None 表示"匹配任意" / Declarative binding rule. All fields optional; None means "match any".
 
-    例如只让 Telegram 私聊走 agent "helper"：
+    例如只让 Telegram 私聊走 agent "helper" / For example, route Telegram DMs only to agent "helper"：
         BindingRule(channel_id="telegram", chat_type=ChatType.DIRECT, agent_id="helper")
     """
     agent_id: str
-    channel_id: str | None = None       # 限定通道，None=任意通道
-    chat_type: ChatType | None = None   # 限定会话类型，None=任意
-    sender_pattern: str | None = None   # 发送者 id 正则，None=任意发送者
-    group_pattern: str | None = None     # 群 id 正则，None=任意群
-    priority: int = 0                    # 优先级，高者优先；同优先级按注册顺序
+    channel_id: str | None = None       # 限定通道，None=任意通道 / restrict channel, None=any channel
+    chat_type: ChatType | None = None   # 限定会话类型，None=任意 / restrict chat type, None=any
+    sender_pattern: str | None = None   # 发送者 id 正则，None=任意发送者 / sender id regex, None=any sender
+    group_pattern: str | None = None     # 群 id 正则，None=任意群 / group id regex, None=any group
+    priority: int = 0                    # 优先级，高者优先；同优先级按注册顺序 / priority, higher wins first; same priority follows registration order
 
 
 def _match_pattern(pattern: str | None, value: str) -> bool:
-    """正则匹配，None 视为通配。"""
+    """正则匹配，None 视为通配 / Regex match, None is treated as a wildcard."""
     if pattern is None:
         return True
     return re.search(pattern, value) is not None
@@ -50,9 +50,9 @@ def _match_pattern(pattern: str | None, value: str) -> bool:
 
 class ChannelRouter:
     """
-    通道路由器：按规则把信封解析到 agent_id。
+    通道路由器：按规则把信封解析到 agent_id / Channel router: resolves an envelope to an agent_id by rules.
 
-    匹配规则：
+    匹配规则 / Matching rules：
       1. 所有字段都匹配的规则胜出
       2. 多个匹配时，priority 高的胜出
       3. 同 priority 按注册顺序，第一个胜出
@@ -65,11 +65,11 @@ class ChannelRouter:
 
     def add_rule(self, rule: BindingRule) -> None:
         self._rules.append(rule)
-        # 按优先级降序排序，priority 高的在前
+        # 按优先级降序排序，priority 高的在前 / Sort by priority descending, higher priority first
         self._rules.sort(key=lambda r: -r.priority)
 
     def resolve(self, envelope: InboundEnvelope) -> str:
-        """返回目标 agent_id。"""
+        """返回目标 agent_id / Return the target agent_id."""
         for rule in self._rules:
             if self._matches(rule, envelope):
                 return rule.agent_id
@@ -90,12 +90,12 @@ class ChannelRouter:
 
 def make_session_key(agent_id: str, envelope: InboundEnvelope) -> str:
     """
-    根据会话类型生成 session_key。
+    根据会话类型生成 session_key / Generate a session_key based on chat type.
 
-    私聊：按 sender_id 隔离（用户×agent 独立上下文）
-    群聊/频道/帖：按 chat_id 共享（群内共享上下文）
+    私聊：按 sender_id 隔离（用户×agent 独立上下文）/ DM: isolation by sender_id (per user×agent independent context)
+    群聊/频道/帖：按 chat_id 共享（群内共享上下文）/ Group/Channel/Thread: shared by chat_id (shared context within the group)
     """
     if envelope.chat_type == ChatType.DIRECT:
         return f"agent:{agent_id}:dm:{envelope.channel_id}:{envelope.sender_id}"
-    # 群聊/频道/帖统一用 chat_id 作为会话隔离维度
+    # 群聊/频道/帖统一用 chat_id 作为会话隔离维度 / Group/Channel/Thread uniformly use chat_id as the session-isolation dimension
     return f"agent:{agent_id}:group:{envelope.channel_id}:{envelope.chat_id}"

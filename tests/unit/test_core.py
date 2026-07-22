@@ -1,6 +1,6 @@
 """
-核心单测：不依赖真实 LLM，mock provider 验证 NanoCore 状态机逻辑。
-行为指纹测试：断言状态转换序列、事件类型、工具调用次数，不断言输出文本。
+核心单测 / Core unit tests：不依赖真实 LLM，mock provider 验证 NanoCore 状态机逻辑。
+行为指纹测试 / Behavior-fingerprint tests：断言状态转换序列、事件类型、工具调用次数，不断言输出文本。
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from nanoharness.core.tool_executor import ToolRegistry, ToolDefinition
 from nanoharness.provider.base import LLMResponse, StreamChunk, ToolCall
 
 
-# ─── Fixtures ─────────────────────────────────────────────────────────────────
+# ─── 测试固件 / Fixtures ─────────────────────────────────────────────────────────────────
 
 def make_ctx(agent_id: str = "test-agent", session_key: str = "sess-1") -> AgentContext:
     return AgentContext(
@@ -31,8 +31,8 @@ def make_ctx(agent_id: str = "test-agent", session_key: str = "sess-1") -> Agent
 
 def make_stream(*chunks: str, tool_calls: list[ToolCall] | None = None):
     """
-    Returns an async mock provider where stream() yields text chunks
-    and optionally a final tool_use response.
+    返回一个 async mock provider / Returns an async mock provider，
+    stream() 会产出文本分块，并可选地附带最终 tool_use 响应。
     """
     stop_reason = "tool_use" if tool_calls else "end_turn"
     final_text = "".join(chunks) if not tool_calls else ""
@@ -62,11 +62,11 @@ def make_stream(*chunks: str, tool_calls: list[ToolCall] | None = None):
     return provider
 
 
-# ─── Tests ────────────────────────────────────────────────────────────────────
+# ─── 测试 / Tests ────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_simple_text_response():
-    """NanoCore 在无工具调用时产出 DoneEvent，状态机经过 IDLE→THINKING→DONE。"""
+    """NanoCore 在无工具调用时产出 DoneEvent，状态机经过 IDLE→THINKING→DONE。 / NanoCore emits DoneEvent when no tool call; state machine goes IDLE→THINKING→DONE."""
     ctx = make_ctx()
     store = EventStore()
     provider = make_stream("Hello ", "world!")
@@ -77,33 +77,33 @@ async def test_simple_text_response():
     async for ev in core.run_turn("Hi"):
         events.append(ev)
 
-    # 最后一个事件必须是 DoneEvent
+    # 最后一个事件必须是 DoneEvent / Last event must be DoneEvent
     assert isinstance(events[-1], DoneEvent)
     done: DoneEvent = events[-1]
     assert done.final_text == "Hello world!"
     assert done.total_tool_calls == 0
 
-    # 状态转换序列
+    # 状态转换序列 / State transition sequence
     state_changes = [e for e in events if isinstance(e, StateChangeEvent)]
     transitions = [(e.from_state, e.to_state) for e in state_changes]
     assert (AgentState.IDLE, AgentState.THINKING) in transitions
     assert (AgentState.THINKING, AgentState.DONE) in transitions
 
-    # EventStore 有记录
+    # EventStore 有记录 / EventStore has records
     assert len(store) > 0
 
 
 @pytest.mark.asyncio
 async def test_tool_call_then_final_answer():
-    """NanoCore 在工具调用后再次问 LLM，最终产出 DoneEvent。"""
+    """NanoCore 在工具调用后再次问 LLM，最终产出 DoneEvent。 / NanoCore re-queries LLM after a tool call, finally emits DoneEvent."""
     ctx = make_ctx()
     store = EventStore()
 
-    # 第一次调用：返回工具请求
+    # 第一次调用：返回工具请求 / First call: returns a tool request
     tool_call = ToolCall(tool_use_id="tc-1", tool_name="add", tool_input={"a": 1, "b": 2})
     first_provider = make_stream(tool_calls=[tool_call])
 
-    # 第二次调用：返回最终答案
+    # 第二次调用：返回最终答案 / Second call: returns the final answer
     second_provider = make_stream("The answer is 3.")
 
     call_count = 0
@@ -157,7 +157,7 @@ async def test_tool_call_then_final_answer():
 
 @pytest.mark.asyncio
 async def test_unknown_tool_returns_error_result():
-    """调用未注册的工具时，ToolResultEvent.success == False，但 NanoCore 继续运行。"""
+    """调用未注册的工具时，ToolResultEvent.success == False，但 NanoCore 继续运行。 / Calling an unregistered tool yields ToolResultEvent.success == False, but NanoCore keeps running."""
     ctx = make_ctx()
     tool_call = ToolCall(tool_use_id="tc-99", tool_name="nonexistent", tool_input={})
 
@@ -192,7 +192,7 @@ async def test_unknown_tool_returns_error_result():
 
 @pytest.mark.asyncio
 async def test_compaction_turn_boundary_protection():
-    """retreat_to_turn_boundary 不会切断 tool_use / tool_result 配对。"""
+    """retreat_to_turn_boundary 不会切断 tool_use / tool_result 配对。 / retreat_to_turn_boundary does not split a tool_use / tool_result pair."""
     from nanoharness.core.context import Message
     from nanoharness.core.compaction import find_turn_boundary_cut, retreat_to_turn_boundary
 
@@ -203,11 +203,11 @@ async def test_compaction_turn_boundary_protection():
         Message(role="assistant", content="Final answer.", token_count=10),
     ]
 
-    # Budget that would cut right at the tool_use/tool_result pair boundary
+    # 预算刚好会切在 tool_use/tool_result 配对边界 / Budget that would cut right at the tool_use/tool_result pair boundary
     cut = find_turn_boundary_cut(messages, keep_budget_tokens=20)
     safe_cut = retreat_to_turn_boundary(messages, cut)
 
-    # Safe cut must not land between a tool_use and its tool_result
+    # 安全切点不能落在 tool_use 与其 tool_result 之间 / Safe cut must not land between a tool_use and its tool_result
     if safe_cut < len(messages):
         assert not messages[safe_cut].is_tool_result(), "Cut must not start with orphaned tool_result"
     if safe_cut > 0:
