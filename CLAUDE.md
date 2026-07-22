@@ -48,16 +48,16 @@ Python 路径：`/Users/zheyuan.wu/miniconda3/envs/nanoharness/bin/python`
 
 | 文件 | 状态 | 说明 |
 |------|------|------|
-| `core/context.py` | ✅ | AgentState / ToolContext(frozen) / AgentContext / TurnContext |
+| `core/context.py` | ✅ | AgentState / StopReason / TurnOutcome / ToolContext(frozen) / AgentContext / TurnContext |
 | `core/nano_core.py` | ✅ | 手写 ReAct while 循环，非递归 async generator，~320 行 |
-| `core/event_store.py` | ✅ | 8 种 Event 类型，append-only，trace_id 索引 |
+| `core/event_store.py` | ✅ | 9 种 Event 类型（含 InterventionEvent），DoneEvent 带 stop_reason/outcome |
 | `core/compaction.py` | ✅ | 语义重要度评分 + turn-boundary 保护 + CompactionConfig |
-| `core/tool_executor.py` | ✅ | ToolRegistry + DeadLoopDetector + 指数退避重试 |
+| `core/tool_executor.py` | ✅ | ToolRegistry + StuckDetector(per-签名计数) + ToolResult 契约 + 指数退避重试 |
 | `provider/base.py` | ✅ | LLMProvider Protocol + ProviderErrorType 分类 |
 | `provider/anthropic.py` | ✅ | 流式 + extended thinking (T3) |
 | `engine/hooks/types.py` | ✅ | TurnHook / ToolHook / CompactionHook Protocol |
 | `engine/hooks/defaults.py` | ✅ | 默认空实现 + safe_call() |
-| `tests/unit/test_core.py` | ✅ | 4 个行为指纹测试，全部通过 |
+| `tests/unit/test_core.py` | ✅ | 7 个测试（含工具返回契约），全部通过 |
 
 ### Phase 2 ✅ 已完成（路由 + TurnRunner）
 
@@ -122,6 +122,22 @@ Python 路径：`/Users/zheyuan.wu/miniconda3/envs/nanoharness/bin/python`
 | `tests/unit/test_observability.py` | ✅ | 14 个测试，全部通过 |
 | `README.md` | ✅ | 架构图 + 启动 + 设计决策 + 量化数据 |
 
+### Phase 8 ✅ 已完成（执行流深度控制）
+
+动机：Phase 1 只有 `max_iter` / `max_tool_calls` 两道硬熔断（与 LangGraph 的 `recursion_limit` 同档），且 `DeadLoopDetector` 是死代码（`_execute_tool` 绕过了它）。本阶段补齐 `Agent 执行流的深度控制力.md` 的 4 个类别各一个机制，让终止原因可观测、卡死可干预、失败可优雅退出。刻意停在通用 harness 边界，不抄 opensquilla 的 coding-agent 专属检测器。
+
+| 机制 | 文件 | 说明 |
+|------|------|------|
+| A. StuckDetector | `core/tool_executor.py` + `core/nano_core.py` | per-签名计数（catch 重复 + 振荡 A-B-A-B），接通主路径（修死代码），触发时跳过执行 + 注入恢复消息 + 禁用工具，不 raise |
+| B. StopReason + TurnOutcome | `core/context.py` + `core/event_store.py` | 6 种 stop_reason + 3 种 outcome，DoneEvent 带字段，`classify_outcome()` 纯函数映射 |
+| C. 两阶段优雅收尾 | `core/nano_core.py` | 撞 max_iter/max_tool_calls 首次：注入"别调工具直接答"指令 + 剥离工具再做一次；二次才硬停（opensquilla 招牌，LangGraph 没有）|
+| D. 工具返回契约 | `core/tool_executor.py` + `core/nano_core.py` | `ToolResult(status, next_action_hint, error_code)`，裸 str 自动包装，序列化带 `[status:]`/`[next_action:]` 强指引 |
+| E. 动态工具禁用 | `core/context.py` + `core/nano_core.py` | `TurnContext.denied_tools`，卡死/预算触发后从 tool_definitions 隐藏，给 Agent 退路 |
+| F. per-tool 调用预算 | `core/nano_core.py` | 单工具调用次数超 `max_calls_per_tool` 触发，catch 同工具不同参数的钻空子（签名去重抓不到）|
+| 测试 | `tests/behavioral/test_control.py` + `tests/unit/test_core.py` | 7 行为指纹测试 + 3 契约单测，全套 150 通过 |
+
+> 诚实取舍：原计划的"字节级 provider 请求去重"在 NanoCore 语义下是死代码（每轮 append history，连续相同请求不可能），已用 per-tool 预算替换。
+
 ---
 
 ## 关键设计决策（不要改动）
@@ -145,6 +161,9 @@ provider 的 `stream()` 同理，不要加 `await`。
 
 ### 6. 测试风格：行为指纹，不断言文字
 测试断言状态转换路径、工具调用次数、事件类型。不用 `assertEqual(done.final_text, "...")` 这类脆弱断言。
+
+### 7. 执行流控制：干预优先于硬停
+卡死检测 / per-tool 预算触发时**不 raise、不直接 force_done**，而是跳过本次执行 + 注入恢复消息 + 禁用该工具（从 tool_definitions 隐藏），让模型有机会换方法收尾。只有两阶段收尾二次撞线才硬停。终止原因走 `DoneEvent.stop_reason` + `outcome`，不塞进 `final_text`。`ToolContext` 保持 frozen，控制状态全放 `TurnContext`（可变）。
 
 ---
 
@@ -179,8 +198,10 @@ channels.* ← 可 import 所有层，是最外层
 | `/Users/zheyuan.wu/project/项目规划.md` | 完整开发计划，7 个 Phase，里程碑和简历写法 |
 | `/Users/zheyuan.wu/project/phase0_opensquilla分析.md` | opensquilla 代码分析 + 10 个关键设计决策 |
 | `/Users/zheyuan.wu/project/phase1_面试总结.md` | Phase 1 面试话术，10 个技术点 + 快速问答卡 |
+| `/Users/zheyuan.wu/project/phase8_面试总结.md` | Phase 8 面试话术，执行流深度控制 7 技术点 + 三家对比 + 快速问答卡 |
 | `pyproject.toml` | 依赖声明，conda 环境名 `nanoharness` |
-| `tests/unit/test_core.py` | 4 个核心行为指纹测试 |
+| `tests/unit/test_core.py` | 7 个核心测试（含工具返回契约）|
+| `tests/behavioral/test_control.py` | 7 个执行流控制行为指纹测试 |
 
 ---
 

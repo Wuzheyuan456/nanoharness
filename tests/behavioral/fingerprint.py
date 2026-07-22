@@ -18,12 +18,16 @@ from dataclasses import dataclass, field
 
 from nanoharness.core.context import AgentContext
 from nanoharness.core.event_store import (
-    DoneEvent, ErrorEvent, EventStore,
-    StateChangeEvent, ToolCallEvent, ToolResultEvent,
+    DoneEvent,
+    ErrorEvent,
+    EventStore,
+    InterventionEvent,
+    StateChangeEvent,
+    ToolCallEvent,
+    ToolResultEvent,
 )
 from nanoharness.core.nano_core import NanoCore
 from nanoharness.provider.base import LLMProvider
-
 
 # ─── 行为指纹 / Behavior Fingerprint ────────────────────────────────────────
 
@@ -37,6 +41,8 @@ class BehaviorFingerprint:
     final_state: str = ""                                     # 最终状态（"DONE" / 状态名） / final state ("DONE" / state name)
     error_occurred: bool = False                              # 是否出现 ErrorEvent / whether ErrorEvent occurred
     event_kinds: list[str] = field(default_factory=list)     # 事件类型序列（调试用） / event kind sequence (for debugging)
+    stop_reason: str = ""                                     # DoneEvent 的终止原因（见 context.StopReason）/ DoneEvent stop reason (see context.StopReason)
+    intervention_reasons: list[str] = field(default_factory=list)  # 触发的干预原因序列 / sequence of intervention reasons fired
 
     @property
     def reached_done(self) -> bool:
@@ -149,7 +155,11 @@ async def run_and_fingerprint(
         elif isinstance(event, ErrorEvent):
             fp.error_occurred = True
 
+        elif isinstance(event, InterventionEvent):
+            fp.intervention_reasons.append(event.reason)
+
         elif isinstance(event, DoneEvent):
             fp.final_state = "DONE"
+            fp.stop_reason = event.stop_reason
 
     return fp

@@ -16,6 +16,44 @@ class AgentState(StrEnum):
     ERROR = "error"
 
 
+# ─── 终止原因与结果分类 / Stop Reason & Outcome ───────────────────────────────
+
+class StopReason(StrEnum):
+    """
+    一轮 ReAct 结束的具体原因 / The specific reason a ReAct turn ended.
+    让"为什么停"可观测可测，而不是塞进 final_text 字符串 / Makes "why it stopped" observable and testable, instead of burying it in final_text.
+    """
+    COMPLETED = "completed"                              # 模型自然产出最终答案 / model produced a final answer
+    MAX_ITERATIONS = "max_iterations"                    # 迭代上限撞线 / iteration ceiling hit
+    MAX_TOOL_CALLS = "max_tool_calls"                     # 工具调用总数上限撞线 / total-tool-call ceiling hit
+    STUCK_LOOP = "stuck_loop"                             # 卡死检测命中（重复签名） / stuck detector fired (repeated signature)
+    TOOL_CALL_BUDGET_EXCEEDED = "tool_call_budget_exceeded"  # 单工具调用预算耗尽 / per-tool call budget exhausted
+    ERROR = "error"                                       # provider/工具异常终止 / terminated by exception
+
+
+class TurnOutcome(StrEnum):
+    """
+    终止原因的粗粒度归类 / Coarse bucketing of stop reasons.
+    对应 MD 文档"失败也应是明确退出状态"的诉求 / Maps to the MD doc's "failure should be an explicit exit state".
+    """
+    COMPLETED = "completed"   # 成功完成 / finished successfully
+    PARTIAL = "partial"       # 因预算/卡死中途停止（非崩溃）/ stopped mid-way on budget/stuck (not a crash)
+    FAILED = "failed"         # 异常退出 / exited via error
+
+
+def classify_outcome(stop_reason: str | StopReason) -> TurnOutcome:
+    """
+    把具体终止原因映射到粗粒度结果 / Map a specific stop reason to a coarse outcome.
+    纯函数，无副作用，便于单测 / Pure function, side-effect-free, easy to unit-test.
+    """
+    sr = StopReason(stop_reason) if stop_reason else StopReason.COMPLETED
+    if sr is StopReason.COMPLETED:
+        return TurnOutcome.COMPLETED
+    if sr is StopReason.ERROR:
+        return TurnOutcome.FAILED
+    return TurnOutcome.PARTIAL   # MAX_ITERATIONS / MAX_TOOL_CALLS / STUCK_LOOP / TOOL_CALL_BUDGET_EXCEEDED
+
+
 # ─── 消息类型 / Message Types ────────────────────────────────────────────────────
 
 # Anthropic 多块内容，用于工具调用 / 结果 / Anthropic multi-block content for tool use / result
@@ -74,6 +112,14 @@ class TurnContext:
 
     # 本轮已执行过压缩则置 True（防止重复压缩） / set to True once compaction has run this turn (prevent double-compact)
     has_compacted: bool = False
+
+    # ── 执行流深度控制状态 / Execution-flow control state ────────────────────
+    # 两阶段优雅收尾：首次撞预算时注入"别调工具直接答"指令再做一次，二次才硬停 / two-phase graceful finalization: first budget hit injects a "answer without tools" directive and retries once, second hit hard-stops
+    finalization_attempted: bool = False
+    # 动态工具禁用集：卡死/预算触发后把工具加入此集，后续 provider 调用不再下发该工具定义 / dynamic tool-deny set: when stuck/budget fires the tool is added here and stripped from subsequent provider calls
+    denied_tools: set[str] = field(default_factory=set)
+    # per-tool 调用计数：catch"同工具不同参数无进展"（签名去重抓不到的钻空子）/ per-tool call counter: catches "same tool, varying args, no progress" that signature dedup misses
+    tool_call_counts: dict[str, int] = field(default_factory=dict)
 
     def elapsed_ms(self) -> float:
         return (time.monotonic() - self.started_at) * 1000

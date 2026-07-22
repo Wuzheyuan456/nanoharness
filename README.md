@@ -37,6 +37,7 @@ NanoHarness
 | 5 | `tests/behavioral/` | ✅ | 行为指纹测试框架：断言行为约束，不断言输出文本 |
 | 6 | `channels/` | ✅ | 多通道网关：信封抽象 + 车道隔离 + 声明式路由 + TG/Discord |
 | 7 | `observability/` `scripts/` | ✅ | OTel 追踪 + 四大黄金信号 + Gradio 面板 + benchmark/压测 |
+| 8 | `core/` | ✅ | 执行流深度控制：StuckDetector + 两阶段收尾 + 工具契约 + 终止分类 + 动态禁用 + per-tool 预算 |
 
 ---
 
@@ -46,7 +47,7 @@ NanoHarness
 # 环境（conda）
 conda activate nanoharness        # Python 3.12
 
-# 跑测试（140 个，含行为指纹测试）
+# 跑测试（150 个，含行为指纹测试）
 python -m pytest -v
 
 # 量化数据 benchmark（需 ANTHROPIC_API_KEY 跑真实数据，--mock 验证流程）
@@ -90,6 +91,9 @@ python -m nanoharness.observability.dashboard
 
 ### 8. 四大黄金信号 + 零依赖 metrics
 自实现 Counter/Histogram/Gauge，`render_prometheus()` 输出标准 exposition format。延迟分桶算 P99 而非平均——平均会掩盖长尾。
+
+### 9. 执行流深度控制 — 干预优先于硬停
+不止 `max_iter`/`max_tool_calls` 两道硬熔断。卡死检测用 per-签名整轮计数（catch 重复 + A-B-A-B 振荡），触发时**不 raise**——跳过执行 + 注入恢复消息 + 动态禁用该工具，给 Agent 退路。撞预算走两阶段优雅收尾（注入"别调工具直接答"+剥离工具再做一次，二次才硬停），这是 opensquilla 的招牌机制、LangGraph 没有。终止原因走 `DoneEvent.stop_reason`（6 种）+ `outcome`（3 分类）可观测可测，不塞进 final_text。工具返回 `ToolResult(status, next_action_hint)` 契约，模糊返回是死循环根因。诚实取舍：没抄 opensquilla 的字节级请求去重（NanoCore 每轮 append history，连续相同请求不可能，是死代码），换成 per-tool 调用预算 catch 同工具不同参数的钻空子。详见 `phase8_面试总结.md`。
 
 ---
 
@@ -141,7 +145,10 @@ channels.*  ← 可 import 所有层，是最外层
 - `phase2_面试总结.md` — TurnRunner、路由、降级链
 - `phase3_面试总结.md` — 三层记忆、FTS5 trigram、Dream
 - `phase4_面试总结.md` — AgentCard、Supervisor、辩论模式
+- `phase5_面试总结.md` — 行为指纹、安全边界、约束规格
 - `phase6_面试总结.md` — 信封、车道隔离、安全门控
+- `phase7_面试总结.md` — OTel 追踪、四大黄金信号、benchmark/压测
+- `phase8_面试总结.md` — 执行流深度控制：卡死检测/两阶段收尾/工具契约/终止分类
 
 ---
 

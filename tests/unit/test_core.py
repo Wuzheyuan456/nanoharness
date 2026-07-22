@@ -4,19 +4,21 @@
 """
 from __future__ import annotations
 
-import asyncio
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
 from nanoharness.core.context import AgentContext, AgentState
 from nanoharness.core.event_store import (
-    DoneEvent, ErrorEvent, EventStore, StateChangeEvent,
-    TextDeltaEvent, ToolCallEvent, ToolResultEvent,
+    DoneEvent,
+    EventStore,
+    StateChangeEvent,
+    ToolCallEvent,
+    ToolResultEvent,
 )
 from nanoharness.core.nano_core import NanoCore
-from nanoharness.core.tool_executor import ToolRegistry, ToolDefinition
+from nanoharness.core.tool_executor import ToolDefinition, ToolRegistry
 from nanoharness.provider.base import LLMResponse, StreamChunk, ToolCall
-
 
 # ─── 测试固件 / Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -193,8 +195,8 @@ async def test_unknown_tool_returns_error_result():
 @pytest.mark.asyncio
 async def test_compaction_turn_boundary_protection():
     """retreat_to_turn_boundary 不会切断 tool_use / tool_result 配对。 / retreat_to_turn_boundary does not split a tool_use / tool_result pair."""
-    from nanoharness.core.context import Message
     from nanoharness.core.compaction import find_turn_boundary_cut, retreat_to_turn_boundary
+    from nanoharness.core.context import Message
 
     messages = [
         Message(role="user", content="q1", token_count=10),
@@ -212,3 +214,88 @@ async def test_compaction_turn_boundary_protection():
         assert not messages[safe_cut].is_tool_result(), "Cut must not start with orphaned tool_result"
     if safe_cut > 0:
         assert not messages[safe_cut - 1].is_tool_use(), "Cut must not follow tool_use without tool_result"
+
+
+# ── 工具返回契约 / Tool Result Contract ────────────────────────────────────────
+
+def test_tool_result_contract_wraps_bare_string():
+    """裸 str 返回值被自动包装为 SUCCESS 契约（向后兼容）/ A bare str return is auto-wrapped as a SUCCESS contract (backward compatible)."""
+    from nanoharness.core.tool_executor import ToolResultStatus
+
+    tr = NanoCore._coerce_tool_result("hello world")
+    assert tr.status == ToolResultStatus.SUCCESS
+    serialized = NanoCore._serialize_tool_result(tr)
+    assert serialized == "[status: success] hello world"
+
+
+def test_tool_result_contract_structured_with_hint():
+    """结构化 ToolResult 带 next_action_hint 时，序列化含强指引行 / A structured ToolResult with next_action_hint serializes to include the strong-guidance line."""
+    from nanoharness.core.tool_executor import ToolResult, ToolResultStatus
+
+    tr = ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content="file written",
+        next_action_hint="now run the tests to verify",
+    )
+    serialized = NanoCore._serialize_tool_result(tr)
+    assert serialized.startswith("[status: success] file written")
+    assert "[next_action: now run the tests to verify]" in serialized
+
+
+@pytest.mark.asyncio
+async def test_tool_result_failure_sets_success_false():
+    """工具返回 ToolResult(FAILURE) 时，ToolResultEvent.success == False（不计入 tools_executed）/ A tool returning ToolResult(FAILURE) yields ToolResultEvent.success == False (not counted in tools_executed)."""
+    from nanoharness.core.tool_executor import (
+        ToolDefinition,
+        ToolRegistry,
+        ToolResult,
+        ToolResultStatus,
+    )
+
+    ctx = make_ctx()
+    tool_call = ToolCall(tool_use_id="tc-fail", tool_name="flaky", tool_input={})
+    call_count = 0
+
+    async def smart_stream(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raw = [{"type": "tool_use", "id": "tc-fail", "name": "flaky", "input": {}}]
+            resp = LLMResponse(raw_content=raw, stop_reason="tool_use", tool_calls=[tool_call])
+        else:
+            resp = LLMResponse(
+                raw_content=[{"type": "text", "text": "giving up."}],
+                stop_reason="end_turn", final_text="giving up.",
+            )
+        yield StreamChunk(is_final=True, final_response=resp)
+
+    provider = MagicMock()
+    provider.model_id = "test"
+    provider.stream = smart_stream
+    provider.count_tokens = MagicMock(return_value=10)
+
+    async def flaky_fn(inputs: dict, ctx):
+        return ToolResult(status=ToolResultStatus.FAILURE, content="disk full", error_code="no_space")
+
+    registry = ToolRegistry()
+    registry.register(ToolDefinition(
+        name="flaky", description="always fails",
+        input_schema={"type": "object", "properties": {}}, fn=flaky_fn,
+    ))
+
+    core = NanoCore(
+        ctx=ctx, provider=provider,
+        tools=registry.as_fn_dict(),
+        tool_definitions=registry.as_api_list(),
+        event_store=EventStore(),
+    )
+
+    tool_results = []
+    async for ev in core.run_turn("try it"):
+        if isinstance(ev, ToolResultEvent):
+            tool_results.append(ev)
+
+    assert tool_results[0].success is False
+    # 序列化内容含 status / error_code 强指引 / serialized content carries status / error_code guidance
+    assert "failure" in tool_results[0].output_preview
+    assert "no_space" in tool_results[0].output_preview

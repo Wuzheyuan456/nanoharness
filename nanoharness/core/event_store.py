@@ -60,6 +60,21 @@ class DoneEvent(AgentEvent):
     total_output_tokens: int = 0
     total_tool_calls: int = 0
     elapsed_ms: float = 0.0
+    # ── 执行流深度控制：终止原因与结果归类 / execution-flow control: why & how the turn ended ──
+    stop_reason: str = ""   # 见 context.StopReason — 让"为什么停"可观测可测 / see context.StopReason — makes "why it stopped" observable
+    outcome: str = ""       # 见 context.TurnOutcome — completed/partial/failed 的粗粒度归类 / see context.TurnOutcome — coarse completed/partial/failed bucket
+
+
+@dataclass
+class InterventionEvent(AgentEvent):
+    """
+    执行流主动干预事件 / Execution-flow active-intervention event.
+
+    当卡死检测 / 工具禁用 / 两阶段收尾触发时发出，使干预行为在事件流中可观测、可断言 / Emitted when stuck-detection / tool-disabling / two-phase finalization fires, making interventions observable and assertable in the event stream.
+    """
+    kind: str = "intervention"
+    reason: str = ""        # stuck_loop / tool_call_budget / finalization / tool_disabled
+    tool_name: str = ""
 
 
 @dataclass
