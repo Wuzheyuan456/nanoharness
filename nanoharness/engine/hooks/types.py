@@ -5,7 +5,6 @@ from typing import Any, Protocol, runtime_checkable
 
 from nanoharness.core.event_store import AgentEvent
 
-
 # ─── Hook 上下文 / Hook Contexts ────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -15,6 +14,7 @@ class TurnHookContext:
     turn_id: str
     trace_id: str
     user_message: str
+    model_id: str = ""    # 路由完成后填入，供 TurnMetricsHook 打标签 / filled after routing; used by TurnMetricsHook for labeling
 
 
 @dataclass(frozen=True)

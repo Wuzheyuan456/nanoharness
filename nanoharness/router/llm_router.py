@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from nanoharness.core.context import Message
 from nanoharness.router.decision_log import DecisionLog, RouterDecision
+from nanoharness.router.policy import RoutingPolicy, apply_routing_policy
 from nanoharness.router.tiers import DEFAULT_TIER_CONFIGS, Tier, TierRegistry
 
 log = logging.getLogger(__name__)
@@ -96,11 +97,15 @@ class LLMRouter:
         registry: TierRegistry | None = None,
         decision_log: DecisionLog | None = None,
         timeout: float = 2.0,                # 超时后降级到 heuristic / degrade to heuristic after timeout
+        policy: RoutingPolicy | None = None, # 路由策略（confidence gate + anti-downgrade）/ routing policy
     ) -> None:
         self._provider = provider
         self._registry = registry or TierRegistry()
         self._log = decision_log
         self._timeout = timeout
+        self._policy = policy
+        # per-session tier 缓存，供 anti_downgrade 使用 / per-session tier cache for anti_downgrade
+        self._session_tier_cache: dict[str, tuple[Tier, float]] = {}
 
     async def classify(
         self,
@@ -115,6 +120,10 @@ class LLMRouter:
         t0 = time.monotonic()
         result = await self._try_llm_classify(message)
         result.latency_ms = (time.monotonic() - t0) * 1000
+
+        # 应用路由策略：置信度升档 + anti-downgrade / Apply routing policy: confidence escalation + anti-downgrade
+        if self._policy is not None:
+            result = apply_routing_policy(result, self._policy, session_key, self._session_tier_cache)
 
         if self._log:
             self._log.append(RouterDecision(

@@ -59,15 +59,22 @@ Python 路径：`/Users/zheyuan.wu/miniconda3/envs/nanoharness/bin/python`
 | `engine/hooks/defaults.py` | ✅ | 默认空实现 + safe_call() |
 | `tests/unit/test_core.py` | ✅ | 7 个测试（含工具返回契约），全部通过 |
 
-### Phase 2 ✅ 已完成（路由 + TurnRunner）
+### Phase 2 ✅ 已完成（路由 + TurnRunner + Provider 故障转移）
 
 | 文件 | 状态 | 说明 |
 |------|------|------|
 | `router/tiers.py` | ✅ | T0~T3 档位、TierConfig、PromptPolicy、TierRegistry（运行时覆盖） |
-| `router/llm_router.py` | ✅ | 一次 T0 LLM call 分类，降级链（LLM→超时→规则→fallback），JSON 容错 |
+| `router/llm_router.py` | ✅ | 一次 T0 LLM call 分类，降级链（LLM→超时→规则→fallback），JSON 容错；持有 `_session_tier_cache`，支持 `RoutingPolicy` |
 | `router/decision_log.py` | ✅ | 路由决策 SQLite 持久化 + cost_savings_report() |
-| `engine/turn_runner.py` | ✅ | per-session Lock 串行化 + ContextVar 重入检测 + Hook 触发 |
-| `tests/unit/test_router.py` | ✅ | 16 个测试，含串并行验证、超时降级、成本报告 |
+| `router/policy.py` | ✅ | `RoutingPolicy`：confidence gate（低置信度升档）+ anti-downgrade（30min KV cache 保护窗口）|
+| `provider/selector.py` | ✅ | `ProviderSelector`：指数退避重试（jitter）+ fallback provider；实现 `LLMProvider` Protocol，TurnRunner 无感知 |
+| `engine/turn_runner.py` | ✅ | per-session Lock 串行化 + ContextVar 重入检测 + Hook 触发；路由优先于 hook_ctx 创建（model_id 可传入 hook）|
+| `engine/hooks/defaults.py` | ✅ | `InputSanitizationHook`（超长输入 WARNING）+ `TurnMetricsHook`（Phase 2↔7 桥接，写 latency/tokens/error）|
+| `tests/unit/test_router.py` | ✅ | 16 个测试 + 4 个路由策略测试（共 20），含串并行验证、confidence gate、anti-downgrade |
+| `tests/unit/test_provider.py` | ✅ | 5 个 ProviderSelector 测试：重试、failover、AUTH_INVALID 立即 re-raise、CONTEXT_TOO_LONG 透传 |
+| `tests/unit/test_hooks.py` | ✅ | 4 个 hook 测试：InputSanitizationHook 超长/正常输入、TurnMetricsHook latency/error |
+
+**设计决策**：`engine/stages/` 6 个空 stub 文件已删除（`TurnRunner._execute` 从未使用它们，是过度抽象的死代码，同 Phase 1 `DeadLoopDetector` 问题，果断删除，不超前设计）。
 
 ### Phase 3 ✅ 已完成（三层记忆系统）
 

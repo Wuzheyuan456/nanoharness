@@ -115,19 +115,7 @@ class TurnRunner:
         turn_id = uuid.uuid4().hex
         t0 = time.monotonic()
 
-        hook_ctx = TurnHookContext(
-            session_key=ctx.session_key,
-            agent_id=ctx.agent_id,
-            turn_id=turn_id,
-            trace_id=trace_id,
-            user_message=user_message,
-        )
-
-        # ── before_turn 钩子 / before_turn hook ──────────────────────────────────────────────────
-        for hook in self._hooks:
-            await safe_call(hook.before_turn(hook_ctx))
-
-        # ── 路由决策 / routing decision ──────────────────────────────────────────────────────────
+        # ── 路由决策（先于 hook_ctx 创建，以便把 model_id 注入 hook_ctx） / routing first so model_id can be injected into hook_ctx ──
         tier = self._default_tier
         if self._router:
             try:
@@ -137,21 +125,35 @@ class TurnRunner:
                     session_key=ctx.session_key,
                 )
                 tier = result.tier
-                # 路由策略 hint 注入 extra_context，供 PromptAssemblerStage 使用 / Inject routing policy hint into extra_context for PromptAssemblerStage
+                # 路由策略 hint 注入 extra_context / Inject routing policy hint into extra_context
                 ctx.extra_context["router_tier"] = str(tier)
                 ctx.extra_context["router_hint"] = self._registry.policy_hint(tier)
-                log.info("路由决策: session=%s tier=%s confidence=%.2f",
-                         ctx.session_key, tier, result.confidence)
+                log.info("路由决策: session=%s tier=%s confidence=%.2f method=%s",
+                         ctx.session_key, tier, result.confidence, result.method)
             except Exception as exc:
                 log.warning("路由失败，使用默认档位 %s: %s", self._default_tier, exc)
 
-        # ── 选择对应档位的 provider / select the provider for the chosen tier ───────────────────────────────────────────
+        # ── 选择对应档位的 provider / select the provider for the chosen tier ─────────────────────────
         provider = self._providers.get(tier) or self._providers.get(self._default_tier)
         if provider is None:
             raise RuntimeError(f"未找到 tier={tier} 的 provider，请检查 provider_factory 配置")
 
         # 更新 ctx 的模型 ID（用于日志和 cost 统计） / Update ctx's model ID (for logging and cost stats)
         ctx.model_id = provider.model_id
+
+        # ── 创建 hook 上下文（路由后，含 model_id）/ Create hook context (post-routing, includes model_id) ──
+        hook_ctx = TurnHookContext(
+            session_key=ctx.session_key,
+            agent_id=ctx.agent_id,
+            turn_id=turn_id,
+            trace_id=trace_id,
+            user_message=user_message,
+            model_id=ctx.model_id,
+        )
+
+        # ── before_turn 钩子 / before_turn hook ──────────────────────────────────────────────────
+        for hook in self._hooks:
+            await safe_call(hook.before_turn(hook_ctx))
 
         # ── 驱动 NanoCore / drive NanoCore ─────────────────────────────────────────────────────
         core = NanoCore(

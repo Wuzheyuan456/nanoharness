@@ -92,7 +92,10 @@ python -m nanoharness.observability.dashboard
 ### 8. 四大黄金信号 + 零依赖 metrics
 自实现 Counter/Histogram/Gauge，`render_prometheus()` 输出标准 exposition format。延迟分桶算 P99 而非平均——平均会掩盖长尾。
 
-### 9. 执行流深度控制 — 干预优先于硬停
+### 9. Provider 故障转移 — 把死代码 `retryable` 接通
+`ProviderSelector` 实现 `LLMProvider` Protocol，对 TurnRunner 完全透明。RATE_LIMITED/SERVER_ERROR/TIMEOUT 指数退避重试（+25% jitter 防 thundering herd），耗尽切 fallback provider；AUTH_INVALID 和 CONTEXT_TOO_LONG 立即 re-raise（前者密钥无效，后者是压缩信号必须透传）。`retryable` 字段 Phase 1 就定义了，Phase 2 才接通——不超前设计。路由策略层（`router/policy.py`）在分类后串联两阶段：confidence gate（低置信度升档）+ anti-downgrade（30min KV cache 保护窗口防降档）。
+
+### 10. 执行流深度控制 — 干预优先于硬停
 不止 `max_iter`/`max_tool_calls` 两道硬熔断。卡死检测用 per-签名整轮计数（catch 重复 + A-B-A-B 振荡），触发时**不 raise**——跳过执行 + 注入恢复消息 + 动态禁用该工具，给 Agent 退路。撞预算走两阶段优雅收尾（注入"别调工具直接答"+剥离工具再做一次，二次才硬停），这是 opensquilla 的招牌机制、LangGraph 没有。终止原因走 `DoneEvent.stop_reason`（6 种）+ `outcome`（3 分类）可观测可测，不塞进 final_text。工具返回 `ToolResult(status, next_action_hint)` 契约，模糊返回是死循环根因。诚实取舍：没抄 opensquilla 的字节级请求去重（NanoCore 每轮 append history，连续相同请求不可能，是死代码），换成 per-tool 调用预算 catch 同工具不同参数的钻空子。详见 `phase8_面试总结.md`。
 
 ---

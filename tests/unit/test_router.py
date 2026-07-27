@@ -305,3 +305,80 @@ async def test_turn_runner_routes_to_correct_tier():
     done = next(e for e in events if isinstance(e, DoneEvent))
     # T0 provider 的 model_id 是 mock-T0 / T0 provider's model_id is mock-T0
     assert ctx.model_id == "mock-T0", f"应使用 T0 provider，实际 model_id={ctx.model_id}"
+
+
+# ─── 路由策略测试 / Routing policy tests ────────────────────────────────────────────────────────
+
+def test_confidence_gate_escalates_low_confidence():
+    """
+    LLM 返回低置信度分类时，confidence gate 升一档。 / confidence gate escalates by one tier when LLM returns low confidence.
+    """
+    from nanoharness.router.llm_router import ClassifyResult
+    from nanoharness.router.policy import RoutingPolicy, apply_routing_policy
+
+    policy = RoutingPolicy(confidence_threshold=0.6)
+    cache: dict = {}
+    result = ClassifyResult(tier=Tier.T1, confidence=0.3, reason="中等任务", method="llm")
+
+    final = apply_routing_policy(result, policy, session_key="s1", session_tier_cache=cache)
+
+    assert final.tier == Tier.T2, f"低置信度 T1 应升到 T2，实际 {final.tier}"
+    assert "confidence_escalated" in final.method
+
+
+def test_confidence_gate_passes_high_confidence():
+    """
+    高置信度分类不升档。 / High-confidence classification is not escalated.
+    """
+    from nanoharness.router.llm_router import ClassifyResult
+    from nanoharness.router.policy import RoutingPolicy, apply_routing_policy
+
+    policy = RoutingPolicy(confidence_threshold=0.6)
+    cache: dict = {}
+    result = ClassifyResult(tier=Tier.T1, confidence=0.9, reason="中等任务", method="llm")
+
+    final = apply_routing_policy(result, policy, session_key="s1", session_tier_cache=cache)
+
+    assert final.tier == Tier.T1
+    assert "confidence_escalated" not in final.method
+
+
+def test_anti_downgrade_protects_tier_within_window():
+    """
+    会话缓存内（30min 窗口）不允许降档，保护 KV cache。 / No downgrade within the session window (30 min), protecting KV cache.
+    """
+    import time
+    from nanoharness.router.llm_router import ClassifyResult
+    from nanoharness.router.policy import RoutingPolicy, apply_routing_policy
+    from nanoharness.router.tiers import Tier
+
+    # confidence_threshold=0.0: 禁用升档，隔离 anti_downgrade 逻辑 / threshold=0.0 disables escalation, isolates anti_downgrade
+    policy = RoutingPolicy(confidence_threshold=0.0, anti_downgrade_window_s=1800.0)
+    cache: dict = {"sess-1": (Tier.T2, time.monotonic())}  # 上轮是 T2 / previous turn was T2
+
+    result = ClassifyResult(tier=Tier.T0, confidence=0.9, reason="打招呼", method="llm")
+    final = apply_routing_policy(result, policy, session_key="sess-1", session_tier_cache=cache)
+
+    assert final.tier == Tier.T2, f"anti_downgrade 应保持 T2，实际 {final.tier}"
+    assert "anti_downgrade" in final.method
+
+
+def test_anti_downgrade_expired_cache_allows_downgrade():
+    """
+    缓存过期后允许降档。 / Downgrade is allowed when the cache has expired.
+    """
+    import time
+    from nanoharness.router.llm_router import ClassifyResult
+    from nanoharness.router.policy import RoutingPolicy, apply_routing_policy
+    from nanoharness.router.tiers import Tier
+
+    # 窗口设为 1s，缓存时间戳设为 5s 前 → 已过期 / window=1s, cache ts=5s ago → expired
+    # confidence_threshold=0.0: 任何置信度都不升档（隔离 anti_downgrade 逻辑）/ threshold=0.0 disables escalation (isolates anti_downgrade)
+    policy = RoutingPolicy(confidence_threshold=0.0, anti_downgrade_window_s=1.0)
+    cache: dict = {"sess-1": (Tier.T2, time.monotonic() - 5.0)}
+
+    result = ClassifyResult(tier=Tier.T0, confidence=0.9, reason="打招呼", method="llm")
+    final = apply_routing_policy(result, policy, session_key="sess-1", session_tier_cache=cache)
+
+    assert final.tier == Tier.T0, f"缓存过期后应放行 T0，实际 {final.tier}"
+    assert "anti_downgrade" not in final.method
