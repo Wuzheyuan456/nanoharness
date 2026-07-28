@@ -41,6 +41,172 @@ NanoHarness
 
 ---
 
+## 完整执行流（Phase 1-3 集成视角）
+
+> 一次用户消息从进入 TurnRunner 到返回 DoneEvent，经历以下 9 个阶段。括号标注代码锚点。
+
+### 阶段 0：per-session 串行化
+`TurnRunner.run()` 先获取 per-session `asyncio.Lock`，保证同一对话同时只跑一个 turn。  
+用 `ContextVar` 检测重入——subagent 以相同 `session_key` 进来时已持有锁，直接跳过等待，避免死锁。  
+`engine/turn_runner.py:run`
+
+### 阶段 1：记忆预取（Phase 3）
+```
+if history >= prefetch_min_turns (默认 2):
+    L3 FTS5 trigram 检索 → BM25×0.3 + 时间衰减×0.3 + importance×0.4 打分排序
+    L2 最近 N 条 session 摘要
+    → 拼接成 context_text 写入 ctx.extra_context["memory_context"]
+```
+history 不足时跳过，避免 session 刚开始的每轮都查空数据库。  
+`memory/manager.py:prefetch` → `memory/retrieval.py:MemoryRetriever`
+
+### 阶段 2：模型路由（Phase 2）
+```
+LLMRouter.classify(user_message)
+  → 一次 Haiku call：输出 {tier: T0-T3, confidence: 0-1, method: "llm"}
+  → 降级链：LLM 超时 → 规则启发式 → fallback tier
+  → RoutingPolicy 串联两阶段：
+      confidence gate：confidence < 0.6 → 升一档（+ "confidence_escalated"）
+      anti-downgrade：30min KV cache，新档位低于历史档位时保持历史档位
+```
+分类结果写入 `ctx.extra_context["router_tier"]`，供后续 hook 和日志使用。  
+`router/llm_router.py:classify` → `router/policy.py:apply_routing_policy`
+
+### 阶段 3：Provider 选择（Phase 2）
+```
+tier → provider_factory[tier] → ProviderSelector (包装 primary + fallbacks)
+  RATE_LIMITED / SERVER_ERROR / TIMEOUT → 指数退避重试（+25% jitter），耗尽切 fallback
+  AUTH_INVALID / CONTEXT_TOO_LONG → 立即 re-raise（不重试）
+```
+`ctx.model_id` 在此更新，之后构造 `TurnHookContext` 时 `model_id` 已确定。  
+`provider/selector.py:ProviderSelector`
+
+### 阶段 4：Hook 质量门（Phase 2）
+```
+TurnHookContext(session_key, agent_id, turn_id, trace_id, user_message, model_id)
+
+before_turn hooks:
+  InputSanitizationHook  → 超长输入 WARNING，可截断或拒绝
+  TurnMetricsHook        → 记录 turn 开始时间戳，初始化 Span
+```
+路由优先于 hook_ctx 创建，`model_id` 可在 `before_turn` 就能拿到（供成本估算 hook 使用）。  
+`engine/hooks/defaults.py`
+
+### 阶段 5：NanoCore ReAct 循环（Phase 1 + Phase 8）
+
+```
+NanoCore.run_turn(user_message):
+  ┌─────────────────────────────────────────────────────────┐
+  │  while iter < max_iter:                                  │
+  │    messages = build_messages(ctx.history, extra_context) │
+  │      ← memory_context 注入 system prompt 尾部            │
+  │                                                          │
+  │    provider.stream(messages, tools)  ← 流式输出           │
+  │      yield StreamEvent per chunk                         │
+  │                                                          │
+  │    if response == text:                                  │
+  │      → 累积 final_text，结束循环                          │
+  │                                                          │
+  │    if response == tool_use:                              │
+  │      StuckDetector.check(签名)        ← Phase 8          │
+  │        → 重复/振荡 → 跳过 + 注入恢复消息 + 禁用工具       │
+  │      ToolExecutor.execute(tool_call)                     │
+  │        → 查 ToolRegistry → 调用 → ToolResult 契约        │
+  │        → 失败 → 指数退避重试                              │
+  │      yield ToolCallEvent / ToolResultEvent               │
+  │      append to ctx.history，继续循环                     │
+  │                                                          │
+  │    if CONTEXT_TOO_LONG:                                  │
+  │      compaction.compact(ctx)    ← Phase 1 + Phase 3      │
+  │        _MemoryAwareCompaction.compact():                 │
+  │          1. memory.on_compact() → 扫 history             │
+  │             工具结果(importance=0.85) + 长用户消息(0.70)  │
+  │             → 写入 L3，压缩后不丢失                       │
+  │          2. inner.compact() → 语义贡献度评分截断          │
+  │             turn-boundary 保护，不切断工具调用配对         │
+  │                                                          │
+  │    if max_iter/per-tool-budget 触发:   ← Phase 8         │
+  │      两阶段优雅收尾：                                     │
+  │        注入"别调工具直接答"指令 + 剥离工具定义 → 再做一次  │
+  │        二次撞线 → 强制 DoneEvent(stop_reason=forced)     │
+  └─────────────────────────────────────────────────────────┘
+
+  yield DoneEvent(final_text, stop_reason, outcome, total_tokens, ...)
+```
+
+`core/nano_core.py:run_turn`
+
+### 阶段 6：after_turn Hook（Phase 2）
+```
+after_turn hooks:
+  TurnMetricsHook → elapsed_ms / total_input_tokens / total_output_tokens
+                 → MetricsCollector.latency_histogram + token_counter
+                 → 四大黄金信号面板可见（Phase 7 消费）
+```
+`engine/hooks/defaults.py:TurnMetricsHook`
+
+### 阶段 7：per-turn 情节记忆写入（Phase 3）
+```
+DoneEvent 后：
+  memory.capture_turn(ctx, user_message, done_event.final_text)
+    → content = "[用户] {user_message[:500]}\n[助手] {assistant_text[:1000]}"
+    → MemoryStore.upsert(MemoryType.EPISODE, importance=0.5)
+```
+无 LLM，同步写入，<1ms。EPISODE 条目是 Dream 机制的原始数据来源。  
+`memory/manager.py:capture_turn`
+
+### 阶段 8：事件流回调用方
+
+全程 `yield AgentEvent`——`StreamEvent` / `ToolCallEvent` / `ToolResultEvent` / `DoneEvent`。  
+调用方 `async for event in runner.run(ctx, msg)` 消费，可实时推送到 Telegram/Discord（Phase 6）或写入 EventStore 做追踪（Phase 7）。
+
+---
+
+### 会话结束流（独立触发）
+```
+channel/gateway 检测用户断连 or /exit 指令
+  → runner.end_session(ctx)
+    → memory.flush(ctx)
+      → SessionConsolidator.consolidate(ctx, started_at)
+        → asyncio.create_task(_run())   ← 不阻塞 flush 返回
+
+        _run() 后台异步：
+          读 L3 EPISODE 条目 + ctx.history 片段
+          → Haiku LLM call：输出严格 JSON
+            { "summary": "...", "facts": [{type, content}, ...] }
+          → summary → L2 sessions 表 (SessionRecord)
+          → facts   → L3 memories 表 (FACT / PREFERENCE)
+          → 失败降级：截断文本作摘要，不写 facts，不崩溃
+```
+`memory/consolidation.py:SessionConsolidator` → `engine/turn_runner.py:end_session`
+
+---
+
+### 数据流总览
+
+```
+用户消息
+  │
+  ├─[Phase 2]─ 路由分类 (T0~T3) + RoutingPolicy + ProviderSelector
+  │
+  ├─[Phase 3]─ prefetch → L2 摘要 + L3 FTS5 召回 → memory_context 注入 system prompt
+  │
+  ├─[Phase 1]─ NanoCore ReAct：LLM → 工具调用 → 结果 → 循环
+  │              ├─[Phase 8]─ StuckDetector + 两阶段收尾 + per-tool 预算
+  │              └─[Phase 3]─ 压缩触发 → on_compact 保护 → inner.compact 截断
+  │
+  ├─[Phase 2]─ after_turn hook → MetricsCollector (Phase 7 消费)
+  │
+  ├─[Phase 3]─ capture_turn → EPISODE 写入 L3
+  │
+  └── DoneEvent → 调用方（Telegram/Discord/直接消费）
+
+session 结束:
+  end_session → flush → Dream → L2 摘要 + L3 事实 (后台异步)
+```
+
+---
+
 ## 快速启动
 
 ```bash
