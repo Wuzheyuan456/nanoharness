@@ -80,12 +80,13 @@ Python 路径：`/Users/zheyuan.wu/miniconda3/envs/nanoharness/bin/python`
 
 | 文件 | 状态 | 说明 |
 |------|------|------|
-| `memory/store.py` | ✅ | SQLite + FTS5 trigram 全文索引，L2 sessions + L3 memories 双表 |
+| `memory/store.py` | ✅ | SQLite + FTS5 trigram 全文索引，L2 sessions + L3 memories 双表；`MemoryType.EPISODE` per-turn 原始捕获 |
 | `memory/retrieval.py` | ✅ | BM25×0.3 + 时间衰减×0.3 + importance×0.4 三路融合排序 |
 | `memory/compaction_hooks.py` | ✅ | 压缩前保护 tool_result 和长消息写入 L3 |
 | `memory/consolidation.py` | ✅ | Dream 机制：session 结束后异步 LLM 提炼摘要+事实 |
-| `memory/manager.py` | ✅ | Facade 门面：prefetch / on_compact / flush 三个方法 |
-| `tests/unit/test_memory.py` | ✅ | 33 个测试，全部通过 |
+| `memory/manager.py` | ✅ | Facade 门面：prefetch / on_compact / capture_turn / flush 四个方法；capture_turn 写 EPISODE，供 Dream 机制消费 |
+| `engine/turn_runner.py` | ✅（Phase 2+3）| Phase 3 新增：memory_manager 参数；四接入点（prefetch/capture_turn/_MemoryAwareCompaction/end_session）；`_MemoryAwareCompaction` 包装 CompactionEngine，__getattr__ 委托，NanoCore 零感知 |
+| `tests/unit/test_memory.py` | ✅ | 39 个测试（Phase 3 原 33 + 6 个 TurnRunner 记忆集成测试），全部通过 |
 
 ### Phase 4 ✅ 已完成（多 Agent 编排）
 
