@@ -15,10 +15,9 @@ import pytest
 from nanoharness.core.context import AgentContext, Message
 from nanoharness.memory.compaction_hooks import MemoryCompactionHook
 from nanoharness.memory.consolidation import SessionConsolidator
-from nanoharness.memory.manager import MemoryConfig, MemoryManager, MEMORY_CONTEXT_KEY
+from nanoharness.memory.manager import MEMORY_CONTEXT_KEY, MemoryConfig, MemoryManager
 from nanoharness.memory.retrieval import MemoryRetriever, RetrievalConfig
 from nanoharness.memory.store import MemoryEntry, MemoryStore, MemoryType, SessionRecord
-
 
 # ─── 公共工具 / Common helpers ──────────────────────────────────────────────────────────────────
 
@@ -513,3 +512,123 @@ class TestMemoryManager:
         s = mgr.stats("agent-test")
         assert s["memory_count"] == 2
         mgr.close()
+
+    def test_capture_turn_writes_episode_entry(self):
+        """capture_turn 写入 EPISODE 类型条目，内容包含用户消息和助手回复。 / capture_turn writes an EPISODE entry containing both user and assistant text."""
+        mgr = MemoryManager(MemoryConfig(db_path=":memory:"))
+        ctx = make_ctx()
+        asyncio.run(mgr.capture_turn(ctx, "你好，帮我分析一下代码", "好的，这段代码的主要问题是..."))
+
+        entries = mgr._store.get_recent("agent-test", memory_type=MemoryType.EPISODE)
+        assert len(entries) == 1, "应写入 1 条 EPISODE 记忆 / should write 1 EPISODE entry"
+        assert "[用户]" in entries[0].content and "[助手]" in entries[0].content, \
+            "内容应包含 [用户] 和 [助手] 标记 / content should contain [用户] and [助手] markers"
+        assert "分析一下代码" in entries[0].content
+        assert "代码的主要问题" in entries[0].content
+        mgr.close()
+
+    def test_capture_turn_skips_empty_assistant_text(self):
+        """assistant_text 为空时 capture_turn 不写入任何条目。 / No entry is written when assistant_text is empty."""
+        mgr = MemoryManager(MemoryConfig(db_path=":memory:"))
+        ctx = make_ctx()
+        asyncio.run(mgr.capture_turn(ctx, "用户消息", ""))
+        assert mgr._store.count("agent-test") == 0, \
+            "助手回复为空时不应写入 / should not write when assistant reply is empty"
+        mgr.close()
+
+    def test_capture_turn_truncates_long_content(self):
+        """超长内容被截断到限定范围内。 / Oversized content is truncated to the configured limit."""
+        mgr = MemoryManager(MemoryConfig(db_path=":memory:"))
+        ctx = make_ctx()
+        asyncio.run(mgr.capture_turn(ctx, "A" * 2000, "B" * 5000))
+        entries = mgr._store.get_recent("agent-test", memory_type=MemoryType.EPISODE)
+        assert len(entries) == 1
+        # 用户截断 500 + 助手截断 1000 + 格式字符，总体不超过 2000
+        assert len(entries[0].content) < 2000, "内容应被截断 / content should be truncated"
+        mgr.close()
+
+
+# ─── TurnRunner 记忆集成测试 / TurnRunner memory integration tests ─────────────────────────────────
+
+class TestTurnRunnerMemoryIntegration:
+    """验证 TurnRunner 在正确的时机调用 MemoryManager 的各个接口。 / Verifies TurnRunner calls MemoryManager interfaces at the correct moments."""
+
+    def _make_provider(self, final_text: str = "好的"):
+        from nanoharness.provider.base import LLMResponse, StreamChunk
+        resp = LLMResponse(
+            raw_content=[{"type": "text", "text": final_text}],
+            stop_reason="end_turn", final_text=final_text,
+            input_tokens=5, output_tokens=5,
+        )
+        p = MagicMock()
+        p.model_id = "mock-T1"
+        p.count_tokens = MagicMock(return_value=10)
+        async def _stream(*a, **kw):
+            yield StreamChunk(is_final=True, final_response=resp)
+        p.stream = _stream
+        return p
+
+    @pytest.mark.asyncio
+    async def test_prefetch_called_before_nanocore(self):
+        """run() 期间 prefetch 被调用一次，且在第一个事件产出之前调用。 / prefetch is called once during run(), before any event is emitted."""
+        from nanoharness.engine.turn_runner import TurnRunner
+        from nanoharness.router.tiers import Tier
+
+        mock_memory = MagicMock()
+        mock_memory.prefetch = AsyncMock(return_value="")
+        mock_memory.capture_turn = AsyncMock()
+
+        runner = TurnRunner(
+            provider_factory={Tier.T1: self._make_provider()},
+            memory_manager=mock_memory,
+        )
+        ctx = make_ctx()
+        async for _ in runner.run(ctx, "你好"):
+            pass
+
+        mock_memory.prefetch.assert_called_once_with(ctx, "你好")
+
+    @pytest.mark.asyncio
+    async def test_capture_turn_called_after_done(self):
+        """DoneEvent 产出后 capture_turn 被调用，传入 final_text。 / After DoneEvent, capture_turn is called with the final_text."""
+        from nanoharness.engine.turn_runner import TurnRunner
+        from nanoharness.router.tiers import Tier
+
+        mock_memory = MagicMock()
+        mock_memory.prefetch = AsyncMock(return_value="")
+        mock_memory.capture_turn = AsyncMock()
+
+        runner = TurnRunner(
+            provider_factory={Tier.T1: self._make_provider("模拟回复内容")},
+            memory_manager=mock_memory,
+        )
+        ctx = make_ctx()
+        async for _ in runner.run(ctx, "写段代码"):
+            pass
+
+        mock_memory.capture_turn.assert_called_once()
+        call_args = mock_memory.capture_turn.call_args
+        assert call_args.args[1] == "写段代码"        # user_message
+        assert call_args.args[2] == "模拟回复内容"    # assistant_text
+
+    @pytest.mark.asyncio
+    async def test_memory_aware_compaction_calls_on_compact_first(self):
+        """_MemoryAwareCompaction.compact 先调 on_compact 再调 inner.compact。 / _MemoryAwareCompaction calls on_compact before inner.compact."""
+        from nanoharness.engine.turn_runner import _MemoryAwareCompaction
+
+        call_order: list[str] = []
+
+        mock_inner = MagicMock()
+        async def _inner_compact(ctx): call_order.append("inner")
+        mock_inner.compact = _inner_compact
+
+        mock_memory = MagicMock()
+        async def _on_compact(ctx): call_order.append("on_compact")
+        mock_memory.on_compact = _on_compact
+
+        ctx = make_ctx()
+        wrapper = _MemoryAwareCompaction(mock_inner, mock_memory)
+        await wrapper.compact(ctx)
+
+        assert call_order == ["on_compact", "inner"], \
+            f"on_compact 必须先于 inner.compact 调用，实际顺序: {call_order}"

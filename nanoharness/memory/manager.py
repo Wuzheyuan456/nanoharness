@@ -104,6 +104,37 @@ class MemoryManager:
         )
         return hook.extract_from_messages(ctx.history)
 
+    async def capture_turn(
+        self,
+        ctx: AgentContext,
+        user_message: str,
+        assistant_text: str,
+    ) -> None:
+        """
+        每轮 ReAct 结束后调用，把 (用户消息, 助手回复) 原文写入 L3 作为情节记忆。
+        无 LLM 提炼，只是原始捕获。flush() 的 LLM 巩固从 EPISODE 条目中提炼摘要和事实。
+
+        设计对照 / Design reference:
+        - opensquilla TurnFinalizerStage.run() → TurnCaptureService（per-turn raw capture）
+        - DeerFlow MemoryMiddleware.after_agent()（per-turn capture + debounce LLM）
+        NanoHarness 选择 opensquilla 路线：raw capture 不用 LLM，LLM 提炼留给 flush()。
+
+        / Called after each ReAct turn; writes (user_message, assistant_text) as episodic memory into L3.
+        No LLM extraction — raw capture only. flush()'s LLM consolidation distills from EPISODE entries.
+        """
+        if not assistant_text:
+            return
+        # 截断防止单条记忆过长 / Truncate to prevent oversized entries
+        content = f"[用户] {user_message[:500]}\n[助手] {assistant_text[:1000]}"
+        self._store.upsert(MemoryEntry(
+            content=content,
+            agent_id=ctx.agent_id,
+            session_key=ctx.session_key,
+            memory_type=MemoryType.EPISODE,
+            importance=0.5,
+        ))
+        log.debug("情节记忆写入: session=%s / episode written: session=%s", ctx.session_key, ctx.session_key)
+
     async def flush(self, ctx: AgentContext) -> None:
         """
         session 结束时调用。触发异步巩固（后台跑，不阻塞响应）。 / Called when session ends; triggers async consolidation (background, non-blocking).

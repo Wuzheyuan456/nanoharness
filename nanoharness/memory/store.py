@@ -8,7 +8,6 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Iterator
 
-
 # ─── 记忆类型 / Memory type ──────────────────────────────────────────────────────────────────
 
 class MemoryType(StrEnum):
@@ -16,6 +15,7 @@ class MemoryType(StrEnum):
     PREFERENCE = "preference"  # 用户偏好（"喜欢简洁代码风格"） / user preference ("prefers concise code style")
     SUMMARY    = "summary"     # 会话摘要 / session summary
     TOOL_RESULT = "tool_result"  # 重要工具结果（"搜索发现 xxx API 已废弃"） / important tool result ("search found xxx API deprecated")
+    EPISODE     = "episode"     # per-turn 原始对话捕获（用户+助手），供 Dream 机制提炼 / per-turn raw (user+assistant) capture, distilled by Dream mechanism
 
 
 # ─── 数据模型 / Data model ──────────────────────────────────────────────────────────────────

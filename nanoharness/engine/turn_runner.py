@@ -64,6 +64,7 @@ class TurnRunner:
         event_store: EventStore | None = None,
         hooks: list[Any] | None = None,
         default_tier: Tier = Tier.T1,
+        memory_manager: Any | None = None,  # MemoryManager；不直接 import 避免循环依赖 / MemoryManager; not imported directly to avoid circular deps
     ) -> None:
         self._providers = provider_factory
         self._registry = registry or TierRegistry()
@@ -71,6 +72,16 @@ class TurnRunner:
         self._event_store = event_store
         self._hooks = hooks or [DefaultTurnHook()]
         self._default_tier = default_tier
+        self._memory = memory_manager
+
+    async def end_session(self, ctx: AgentContext) -> None:
+        """
+        session 结束时由外部调用，触发 LLM 巩固（Dream 机制）。 / Called by external code on session end; triggers LLM consolidation (Dream mechanism).
+
+        典型调用方：Gateway 检测用户断连、Channel 收到 /exit 指令时。 / Typical callers: Gateway on user disconnect, Channel on /exit command.
+        """
+        if self._memory:
+            await self._memory.flush(ctx)
 
     async def run(
         self,
@@ -115,6 +126,11 @@ class TurnRunner:
         turn_id = uuid.uuid4().hex
         t0 = time.monotonic()
 
+        # ── 1. prefetch：turn 开始前从 L2/L3 召回相关记忆，注入 ctx.extra_context ──────────────
+        # 对照 opensquilla AgentBootstrapStage / DeerFlow DynamicContextMiddleware.before_agent
+        if self._memory:
+            await self._memory.prefetch(ctx, user_message)
+
         # ── 路由决策（先于 hook_ctx 创建，以便把 model_id 注入 hook_ctx） / routing first so model_id can be injected into hook_ctx ──
         tier = self._default_tier
         if self._router:
@@ -155,13 +171,21 @@ class TurnRunner:
         for hook in self._hooks:
             await safe_call(hook.before_turn(hook_ctx))
 
+        # ── 2. 包装 compaction：压缩前触发 on_compact 保护重要消息写入 L3 ─────────────────────────
+        # 对照 opensquilla pre-compaction SessionFlushService / DeerFlow memory_flush_hook
+        effective_compaction = (
+            _MemoryAwareCompaction(compaction, self._memory)
+            if compaction is not None and self._memory
+            else compaction
+        )
+
         # ── 驱动 NanoCore / drive NanoCore ─────────────────────────────────────────────────────
         core = NanoCore(
             ctx=ctx,
             provider=provider,
             tools=tools or {},
             tool_definitions=tool_definitions or [],
-            compaction=compaction,
+            compaction=effective_compaction,
             event_store=self._event_store,
         )
 
@@ -206,3 +230,37 @@ class TurnRunner:
             exc_obj = RuntimeError(error_event.error_message)
             for hook in self._hooks:
                 await safe_call(hook.on_error(hook_ctx, exc_obj))
+
+        # ── 3. capture_turn：DoneEvent 后把 (用户消息, 助手回复) 写入 L3 情节记忆 ───────────────
+        # 对照 opensquilla TurnFinalizerStage → TurnCaptureService（per-turn raw capture）
+        # 无 LLM 提炼，只是原始捕获；LLM 巩固在 end_session() → flush() 里做
+        if self._memory and done_event:
+            await self._memory.capture_turn(ctx, user_message, done_event.final_text)
+
+
+# ─── _MemoryAwareCompaction ───────────────────────────────────────────────────
+
+class _MemoryAwareCompaction:
+    """
+    包装 CompactionEngine，在压缩前调 on_compact 保护重要消息写入 L3。
+    / Wraps CompactionEngine; calls on_compact before compaction to protect important messages into L3.
+
+    对照 / Design reference:
+    - opensquilla: pre-compaction SessionFlushService.execute()
+    - DeerFlow: memory_flush_hook + add_nowait()（零延迟紧急队列）
+    NanoHarness 直接在 compact() 前 await on_compact()，无 debounce（SQLite 写入足够快）。
+    """
+
+    def __init__(self, inner: Any, memory: Any) -> None:
+        self._inner = inner
+        self._memory = memory
+
+    async def compact(self, ctx: AgentContext) -> None:
+        # 先保护：把 history 高价值内容写入 L3，再压缩（压缩后这些消息会被清除）
+        # / Protect first: write high-value history content into L3, then compact (these messages are cleared after)
+        await self._memory.on_compact(ctx)
+        await self._inner.compact(ctx)
+
+    def __getattr__(self, name: str) -> Any:
+        # context_window_limit、has_compacted 等属性委托给 inner / Delegate other attributes to inner
+        return getattr(self._inner, name)
