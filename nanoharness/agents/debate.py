@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import re
 import time
 import uuid
 from dataclasses import dataclass, field
 
+from nanoharness.agents.orchestrator import _parse_json
 from nanoharness.core.context import AgentContext
 from nanoharness.core.event_store import DoneEvent
 from nanoharness.core.nano_core import NanoCore
@@ -56,7 +55,6 @@ class ReviewOpinion:
     issues: list[str] = field(default_factory=list)
     suggestions: list[str] = field(default_factory=list)
     verdict: str = "request_changes"             # approve | request_changes | reject / approve | request_changes | reject
-    raw_text: str = ""                           # LLM 原始输出（调试用）/ LLM raw output (for debugging)
 
 
 @dataclass
@@ -228,14 +226,12 @@ def _parse_opinion(label: str, raw_text: str) -> ReviewOpinion:
             issues=data.get("issues", []),
             suggestions=data.get("suggestions", []),
             verdict=data.get("verdict", "request_changes"),
-            raw_text=raw_text,
         )
     # 降级：把原始文字当作唯一 issue / Fallback: treat the raw text as the only issue
     return ReviewOpinion(
         reviewer_label=label,
         issues=[raw_text[:200]] if raw_text else ["审查失败，无输出"],
         verdict="request_changes",
-        raw_text=raw_text,
     )
 
 
@@ -276,20 +272,3 @@ def _build_review_prompt(code: str, context: str) -> str:
         parts.append(f"背景说明：{context}")
     parts.append(f"```\n{code}\n```")
     return "\n\n".join(parts)
-
-
-def _parse_json(text: str) -> dict | None:
-    """两步容错解析，保持项目内一致的 JSON 解析策略 / Two-step fault-tolerant parsing, keeping a consistent JSON parsing strategy across the project."""
-    if not text:
-        return None
-    try:
-        return json.loads(text.strip())
-    except json.JSONDecodeError:
-        pass
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group())
-        except json.JSONDecodeError:
-            pass
-    return None

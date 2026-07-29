@@ -24,7 +24,6 @@ class AgentCard:
     default_tier: str = "T1"                         # 对应 TierRegistry 中的 T0~T3 / corresponds to T0~T3 in TierRegistry
     tools: dict[str, Any] = field(default_factory=dict)
     tool_definitions: list[dict[str, Any]] = field(default_factory=list)
-    max_concurrent: int = 3                          # 同一 agent 最多同时运行几个实例 / max concurrent instances of the same agent
 
 
 class AgentRegistry:

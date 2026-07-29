@@ -81,10 +81,6 @@ class OrchestratorResult:
     def succeeded_count(self) -> int:
         return sum(1 for r in self.subtask_results if r.success)
 
-    @property
-    def failed_count(self) -> int:
-        return len(self.subtask_results) - self.succeeded_count
-
 
 # ─── Orchestrator ─────────────────────────────────────────────────────────────
 
@@ -232,15 +228,6 @@ class Orchestrator:
         worker_session = f"{parent_session_key}#worker-{spec.index}-{uuid.uuid4().hex[:6]}"
 
         provider = self._get_provider(card.default_tier)
-        if provider is None:
-            return SubtaskResult(
-                spec=spec,
-                agent_id=card.agent_id,
-                output="[错误：未找到对应 provider，检查 provider_factory 配置]",
-                success=False,
-                elapsed_ms=(time.monotonic() - t0) * 1000,
-            )
-
         ctx = AgentContext(
             agent_id=card.agent_id,
             session_key=worker_session,
@@ -309,13 +296,13 @@ class Orchestrator:
 
     # ── 内部工具 / Internal helpers ──────────────────────────────────────────────
 
-    def _get_provider(self, tier: str) -> LLMProvider | None:
-        """按档位取 provider，找不到时逐级向上兜底 / Get a provider by tier; fall back level by level upward when not found."""
+    def _get_provider(self, tier: str) -> LLMProvider:
+        """按档位取 provider，找不到时逐级向上兜底，仍未找到则 raise / Get a provider by tier; fall back level by level upward; raise if not found."""
         for t in [tier, "T1", "T0"]:
             p = self._providers.get(t)
             if p is not None:
                 return p
-        return next(iter(self._providers.values()), None)
+        raise RuntimeError(f"provider_factory 中找不到 tier={tier} 或兜底档位，请检查配置")
 
 
 # ─── 模块级常量 / Module-level constants ───────────────────────────────────────
