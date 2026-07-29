@@ -25,7 +25,9 @@ from nanoharness.agents.orchestrator import (
     _ORCHESTRATION_DEPTH,
     _parse_json,
 )
+from nanoharness.agents.dispatcher import AgentDispatcher
 from nanoharness.agents.registry import AgentCard, AgentRegistry
+from nanoharness.channels.base import ChatType, InboundEnvelope
 from nanoharness.core.context import AgentContext
 from nanoharness.provider.base import LLMResponse, StreamChunk
 
@@ -499,3 +501,112 @@ class TestDebateOrchestrator:
         b = ReviewOpinion("B", verdict="approve")
         _, verdict, _ = _parse_judge("", a, b)
         assert verdict == "approve"
+
+
+# ─── AgentDispatcher 测试 / AgentDispatcher tests ─────────────────────────────
+
+
+def _make_envelope(content: str, chat_type: ChatType = ChatType.DIRECT) -> InboundEnvelope:
+    return InboundEnvelope(
+        channel_id="test",
+        sender_id="user-1",
+        chat_id="user-1",
+        chat_type=chat_type,
+        content=content,
+    )
+
+
+def _make_mock_turn_runner(reply: str = "单 Agent 回复") -> MagicMock:
+    """返回 mock TurnRunner，run() 是 async generator，yield 一个 DoneEvent。"""
+    from nanoharness.core.event_store import DoneEvent
+    from nanoharness.core.context import StopReason, TurnOutcome
+
+    done = DoneEvent(
+        trace_id="t",
+        session_key="s",
+        agent_id="a",
+        final_text=reply,
+        stop_reason=StopReason.COMPLETED,
+        outcome=TurnOutcome.COMPLETED,
+    )
+
+    async def _gen(*args, **kwargs):
+        yield done
+
+    runner = MagicMock()
+    runner.run = _gen
+    return runner
+
+
+def _make_mock_orchestrator(synthesis: str = "多 Agent 综合回复") -> MagicMock:
+    from nanoharness.agents.orchestrator import OrchestratorResult
+
+    result = OrchestratorResult(
+        original_task="task",
+        subtask_results=[],
+        final_synthesis=synthesis,
+        total_elapsed_ms=0.0,
+    )
+    orch = MagicMock()
+    orch.run = AsyncMock(return_value=result)
+    return orch
+
+
+class TestAgentDispatcher:
+    def test_simple_message_routes_to_turn_runner(self):
+        """短消息走 TurnRunner，Orchestrator.run 不被调用。"""
+        runner = _make_mock_turn_runner("单 Agent 回复")
+        orch = _make_mock_orchestrator()
+        dispatcher = AgentDispatcher(runner, orchestrator=orch)
+
+        result = asyncio.run(dispatcher(_make_envelope("你好")))
+
+        assert result is not None
+        assert result.content == "单 Agent 回复"
+        orch.run.assert_not_called()
+
+    def test_long_message_routes_to_orchestrator(self):
+        """长消息（超过阈值）走 Orchestrator。"""
+        runner = _make_mock_turn_runner()
+        orch = _make_mock_orchestrator("多 Agent 综合回复")
+        dispatcher = AgentDispatcher(runner, orchestrator=orch, complex_threshold=10)
+
+        result = asyncio.run(dispatcher(_make_envelope("这是一条超过十个字符的复杂消息请求")))
+
+        assert result is not None
+        assert result.content == "多 Agent 综合回复"
+        orch.run.assert_called_once()
+
+    def test_keyword_triggers_orchestrator(self):
+        """包含复杂度关键词（'分别'）的消息走 Orchestrator。"""
+        runner = _make_mock_turn_runner()
+        orch = _make_mock_orchestrator("多 Agent 综合回复")
+        dispatcher = AgentDispatcher(runner, orchestrator=orch)
+
+        result = asyncio.run(dispatcher(_make_envelope("分别帮我搜索天气和写一首诗")))
+
+        assert result is not None
+        orch.run.assert_called_once()
+
+    def test_no_orchestrator_always_uses_turn_runner(self):
+        """未传入 orchestrator 时，任何消息都走 TurnRunner。"""
+        runner = _make_mock_turn_runner("兜底回复")
+        dispatcher = AgentDispatcher(runner, orchestrator=None, complex_threshold=5)
+
+        result = asyncio.run(dispatcher(_make_envelope("分别同时并行很长很长的消息")))
+
+        assert result is not None
+        assert result.content == "兜底回复"
+
+    def test_outbound_envelope_fields_match_inbound(self):
+        """OutboundEnvelope 的 target_channel/target_peer 与入站信封一致。"""
+        runner = _make_mock_turn_runner("回复")
+        dispatcher = AgentDispatcher(runner)
+
+        envelope = _make_envelope("你好")
+        result = asyncio.run(dispatcher(envelope))
+
+        assert result is not None
+        assert result.target_channel == envelope.channel_id
+        assert result.target_peer == envelope.chat_id
+        assert result.reply_to_envelope_id == envelope.envelope_id
