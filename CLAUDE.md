@@ -121,7 +121,7 @@ Python 路径：`/Users/zheyuan.wu/miniconda3/envs/nanoharness/bin/python`
 
 | 文件 | 状态 | 说明 |
 |------|------|------|
-| `observability/tracing.py` | ✅ | 轻量 OTel：Span 树 + ContextVar 父子继承 + build_tree 回放 |
+| `observability/tracing.py` | ✅ | 轻量 OTel：Span 树 + ContextVar 父子继承 + build_tree 回放；`enable_otel()` 双写桥接 OTel SDK（内存 Span 给面板，SDK 真 Span 给 exporter，业务零改动） |
 | `observability/metrics.py` | ✅ | 四大黄金信号，自实现 Counter/Histogram/Gauge，render_prometheus |
 | `observability/dashboard.py` | ✅ | Gradio 三 Tab：路由决策/链路回放/黄金信号 |
 | `scripts/benchmark_router.py` | ✅ | LLMRouter 准确率 + cost 节省%，支持 mock/真实切换 |

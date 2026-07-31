@@ -2,10 +2,11 @@
 OpenTelemetry 全链路追踪（轻量封装）/ OpenTelemetry full-link tracing (lightweight wrapper).
 
 设计取舍 / Design tradeoff:
-  - 不引入 OTel SDK 的重 exporter（ConsoleSpanExporter/JaegerExporter），
-    那需要额外配置 collector，秋招项目用不上
+  - 不默认引入 OTel SDK 的重 exporter（Console/Jaeger/OTLP），
+    那需要额外配置 collector，秋招项目默认用不上
   - 自己手写 Span 树 + 内存存储，供 Gradio 面板做链路回放
-  - 可选桥接 OTel API：如果上层配了真 SDK，trace_turn 会创建真 Span
+  - enable_otel() 后双写：内存 Span（给面板）+ OTel SDK 真 Span（给 exporter）
+    业务代码（start_span 调用点）零改动，属性/事件/错误状态/父子关系自动同步
 
 为什么自己写而不是直接用 SDK？
   面试导向——手写的 Span 树每一行都能解释，且零依赖、零配置即可跑。
@@ -15,9 +16,11 @@ OpenTelemetry 全链路追踪（轻量封装）/ OpenTelemetry full-link tracing
 
 面试话术：
 "OTel 的核心价值是 trace_id 串联跨模块调用。我手写了 Span 树，
-  不用重 SDK exporter——因为我的 Gradio 面板直接读内存 Span 就能回放，
-  不需要额外的 collector 进程。如果以后要接 Jaeger，
-  只在 start_span 里加一个真 SDK 的调用，业务代码零改动。"
+不用重 SDK exporter——因为我的 Gradio 面板直接读内存 Span 就能回放，
+不需要额外的 collector 进程。enable_otel() 后会双写：内存 Span 给面板，
+OTel SDK 真 Span 给 exporter，两套父子关系各自维护（我的用 ContextVar，
+OTel 用自己的 context），业务代码零改动。生产要接 Jaeger，
+在 enable_otel 前配 OTLP exporter 即可。"
 """
 from __future__ import annotations
 
@@ -86,14 +89,36 @@ class Tracer:
         self._spans: dict[str, Span] = {}              # span_id → Span
         self._by_trace: dict[str, list[Span]] = {}     # trace_id → spans
         self._otel_enabled = False                     # 是否桥接真 OTel SDK / whether to bridge real OTel SDK
+        self._otel_tracer: Any = None                  # OTel SDK tracer 实例（enable_otel 后才有）/ OTel SDK tracer instance (after enable_otel)
+        self._otel_trace: Any = None                   # opentelemetry.trace 模块引用，取 Status/StatusCode / opentelemetry.trace module ref, for Status/StatusCode
 
     def enable_otel(self) -> None:
-        """启用 OTel SDK 桥接（需安装 opentelemetry-sdk），默认关闭 / Enable OTel SDK bridging (requires opentelemetry-sdk), disabled by default."""
+        """
+        启用 OTel SDK 桥接（需安装 opentelemetry-sdk），默认关闭 / Enable OTel SDK bridging (requires opentelemetry-sdk), disabled by default.
+
+        调用后 start_span 会双写：自己的内存 Span（供 Gradio 面板）+ OTel SDK 真 Span（供 exporter）。
+        未配置外部 provider 时自动装一个 Console exporter，方便 demo 可见；生产应替换为 OTLP/Jaeger。
+        / After this call start_span double-writes: in-memory Span (for Gradio panel) + OTel SDK real Span (for exporters).
+        If no external provider is configured, a Console exporter is auto-installed for demo visibility; production should swap in OTLP/Jaeger.
+        """
         try:
-            from opentelemetry import trace as otel_trace  # noqa: F401
-            self._otel_enabled = True
+            from opentelemetry import trace as otel_trace
+            from opentelemetry.sdk.trace import TracerProvider
+            from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
         except ImportError:
-            pass
+            return   # 没装 SDK，静默降级到纯内存模式 / no SDK installed, silently degrade to in-memory only
+
+        # 已配置真 provider（如 OTLP）则不覆盖；否则装一个 Console 默认的，方便 demo / don't override if a real provider (e.g. OTLP) is already set; otherwise install a Console default for demo
+        # 用 Simple（同步导出）而非 Batch：避免后台线程在 stdout 关闭后 flush 产生噪音 / use Simple (sync export) not Batch: avoids a background thread flushing after stdout closes
+        provider = otel_trace.get_tracer_provider()
+        if not isinstance(provider, TracerProvider):
+            tp = TracerProvider()
+            tp.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+            otel_trace.set_tracer_provider(tp)
+
+        self._otel_tracer = otel_trace.get_tracer("nanoharness")
+        self._otel_trace = otel_trace
+        self._otel_enabled = True
 
     # ── Span 生命周期 / Span lifecycle ───────────────────────────────────────────
 
@@ -192,29 +217,69 @@ class _SpanContext:
         self._tracer = tracer
         self.span = span
         self._token = None
+        self._otel_cm: Any = None     # OTel 真 span 的 context manager（enable_otel 后才有）/ OTel real span context manager (only after enable_otel)
+        self._otel_span: Any = None
 
     async def __aenter__(self) -> Span:
         self._token = _CURRENT_SPAN_ID.set(self.span.span_id)
+        # 双写桥接：同步建 OTel 真 Span，父子关系由 OTel context 自动维护 / double-write bridge: also create an OTel real Span, parent linking auto-managed by OTel context
+        if self._tracer._otel_enabled:
+            self._otel_cm = self._tracer._otel_tracer.start_as_current_span(self.span.name)
+            self._otel_span = self._otel_cm.__enter__()
         return self.span
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         self.span.end_ts = time.time()
         if exc is not None:
             self.span.set_error(f"{exc_type.__name__}: {exc}")
+        # 结束 OTel span：先把内存 Span 累积的属性/事件/状态同步过去 / end OTel span: sync accumulated attrs/events/status from in-memory Span first
+        self._sync_and_exit_otel(exc_type, exc, tb)
         if self._token is not None:
             _CURRENT_SPAN_ID.reset(self._token)
 
     # 同步 with 也支持，方便非 async 代码段（如工具函数内部）/ sync with also supported, for non-async code sections (e.g. inside tool functions)
     def __enter__(self) -> Span:
         self._token = _CURRENT_SPAN_ID.set(self.span.span_id)
+        if self._tracer._otel_enabled:
+            self._otel_cm = self._tracer._otel_tracer.start_as_current_span(self.span.name)
+            self._otel_span = self._otel_cm.__enter__()
         return self.span
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.span.end_ts = time.time()
         if exc is not None:
             self.span.set_error(f"{exc_type.__name__}: {exc}")
+        self._sync_and_exit_otel(exc_type, exc, tb)
         if self._token is not None:
             _CURRENT_SPAN_ID.reset(self._token)
+
+    def _sync_and_exit_otel(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        """把内存 Span 的属性/事件/状态同步到 OTel span 并结束它 / sync in-memory Span's attrs/events/status to OTel span and end it."""
+        if self._otel_cm is None:
+            return
+        # 属性：OTel 只接受 str/int/float/bool，其余转字符串 / attrs: OTel accepts only str/int/float/bool, str() the rest
+        for k, v in self.span.attributes.items():
+            try:
+                self._otel_span.set_attribute(k, v if isinstance(v, (str, int, float, bool)) else str(v))
+            except Exception:
+                pass
+        # 事件 / events
+        for ev in self.span.events:
+            try:
+                self._otel_span.add_event(ev["name"])
+            except Exception:
+                pass
+        # 错误状态 / error status
+        if self.span.status == "error":
+            otel = self._tracer._otel_trace
+            self._otel_span.set_status(otel.Status(otel.StatusCode.ERROR))
+        # 结束 OTel context manager（OTel 内部负责把 span 发给 exporter）/ end OTel context manager (OTel internally ships the span to exporter)
+        try:
+            self._otel_cm.__exit__(exc_type, exc, tb)
+        except Exception:
+            pass
+        self._otel_cm = None
+        self._otel_span = None
 
 
 # ─── 全局单例 / Global singleton ────────────────────────────────────────────────

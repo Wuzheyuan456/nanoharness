@@ -28,16 +28,16 @@ NanoHarness
 
 ## 七个 Phase
 
-| Phase | 模块 | 状态 | 一句话 |
-|-------|------|------|--------|
-| 1 | `core/` | ✅ | 手写 ReAct async generator，语义贡献度压缩，事件溯源 |
-| 2 | `engine/` `router/` | ✅ | TurnRunner 分阶段 + per-session 锁重入检测 + LLM 难度路由 |
-| 3 | `memory/` | ✅ | 三层记忆 + FTS5 trigram 中文检索 + 时间衰减 + Dream 巩固 |
-| 4 | `agents/` | ✅ | AgentCard/A2A + Supervisor 四步编排 + 辩论模式独立视角 |
-| 5 | `tests/behavioral/` | ✅ | 行为指纹测试框架：断言行为约束，不断言输出文本 |
-| 6 | `channels/` | ✅ | 多通道网关：信封抽象 + 车道隔离 + 声明式路由 + TG/Discord |
-| 7 | `observability/` `scripts/` | ✅ | OTel 追踪 + 四大黄金信号 + Gradio 面板 + benchmark/压测 |
-| 8 | `core/` | ✅ | 执行流深度控制：StuckDetector + 两阶段收尾 + 工具契约 + 终止分类 + 动态禁用 + per-tool 预算 |
+| Phase | 模块                          | 状态  | 一句话                                                              |
+| ----- | --------------------------- | --- | ---------------------------------------------------------------- |
+| 1     | `core/`                     | ✅   | 手写 ReAct async generator，语义贡献度压缩，事件溯源                            |
+| 2     | `engine/` `router/`         | ✅   | TurnRunner 分阶段 + per-session 锁重入检测 + LLM 难度路由                    |
+| 3     | `memory/`                   | ✅   | 三层记忆 + FTS5 trigram 中文检索 + 时间衰减 + Dream 巩固                       |
+| 4     | `agents/`                   | ✅   | AgentCard/A2A + Supervisor 四步编排 + 辩论模式独立视角                       |
+| 5     | `tests/behavioral/`         | ✅   | 行为指纹测试框架：断言行为约束，不断言输出文本                                          |
+| 6     | `channels/`                 | ✅   | 多通道网关：信封抽象 + 车道隔离 + 声明式路由 + TG/Discord                           |
+| 7     | `observability/` `scripts/` | ✅   | OTel 追踪 + 四大黄金信号 + Gradio 面板 + benchmark/压测                      |
+| 8     | `core/`                     | ✅   | 执行流深度控制：StuckDetector + 两阶段收尾 + 工具契约 + 终止分类 + 动态禁用 + per-tool 预算 |
 
 ---
 

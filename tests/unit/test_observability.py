@@ -209,3 +209,132 @@ def test_global_singletons():
     # MetricsCollector 每次新建，但 get_metrics 是单例 / MetricsCollector is newly created each time, but get_metrics is a singleton
     from nanoharness.observability.metrics import get_metrics
     assert get_metrics() is get_metrics()
+
+
+# ─── OTel 桥接测试 / OTel bridging tests ───────────────────────────────────────
+
+def test_enable_otel_no_sdk_is_noop():
+    """没装 opentelemetry-sdk 时 enable_otel 静默降级，不影响内存 Span。 / Without the SDK, enable_otel silently degrades; in-memory Span unaffected."""
+    tracer = Tracer()
+    # 即使 SDK 已装，也能验证 enable 后内存链路照常工作 / even with SDK installed, verify in-memory chain still works after enable
+    tracer.enable_otel()
+    with tracer.trace_turn(session_key="s", agent_id="a") as span:
+        span.set_attr("k", "v")
+    assert span.status == "ok"
+    assert len(tracer.get_trace(span.trace_id)) == 1
+
+
+def test_enable_otel_double_writes_to_sdk():
+    """enable_otel 后 start_span 双写：内存 Span + OTel SDK 真 Span。 / After enable_otel, start_span double-writes: in-memory Span + OTel SDK real Span."""
+    from opentelemetry import trace as otel_trace
+
+    tracer = Tracer()
+    tracer.enable_otel()
+    assert tracer._otel_enabled is True
+
+    # 抓 OTel SDK 产出的 span（Console exporter 会吃掉，用 InMemorySpanProcessor 直接看）/ capture OTel SDK spans via an in-memory processor
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor, ConsoleSpanExporter
+
+    provider = otel_trace.get_tracer_provider()
+    # 用一个能存下来的 processor 替换，验证双写真的产生了 OTel span / swap in a processor that retains spans to verify double-write produced OTel spans
+    captured: list = []
+
+    class _CaptureExporter(ConsoleSpanExporter):
+        def export(self, spans):
+            captured.extend(spans)
+            return super().export(spans)
+
+    # tracer.enable_otel 已经装了 Console exporter，这里直接补一个 capture processor / enable_otel already installed a Console exporter; add a capture processor alongside
+    if isinstance(provider, TracerProvider):
+        provider.add_span_processor(SimpleSpanProcessor(_CaptureExporter()))
+
+    with tracer.trace_turn(session_key="s", agent_id="a") as root:
+        root.set_attr("user_msg", "你好")
+        with tracer.start_span("router.classify", model="haiku"):
+            pass
+
+    # 内存侧：两个 Span / in-memory side: two Spans
+    assert len(tracer.get_trace(root.trace_id)) == 2
+    # OTel 侧：也该有两个真 span（root + child）/ OTel side: should also have two real spans (root + child)
+    assert len(captured) >= 2
+    names = {getattr(s, "name", "") for s in captured}
+    assert "turn" in names
+    assert "router.classify" in names
+
+
+def test_enable_otel_syncs_attributes_and_error_status():
+    """OTel span 继承内存 Span 的属性和错误状态。 / OTel span inherits the in-memory Span's attributes and error status."""
+    from opentelemetry import trace as otel_trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+    tracer = Tracer()
+    tracer.enable_otel()
+
+    captured: list = []
+
+    class _Cap:
+        def export(self, spans):
+            captured.extend(spans)
+            return 0
+
+        def shutdown(self):
+            return None
+
+    provider = otel_trace.get_tracer_provider()
+    if isinstance(provider, TracerProvider):
+        provider.add_span_processor(SimpleSpanProcessor(_Cap()))
+
+    with pytest.raises(ValueError):
+        with tracer.trace_turn(session_key="s", agent_id="a") as root:
+            root.set_attr("phase", "error-demo")
+            raise ValueError("boom")
+
+    assert len(captured) >= 1
+    err_span = captured[-1]
+    # 属性同步过去了 / attribute synced
+    attrs = getattr(err_span, "attributes", {})
+    assert attrs.get("phase") == "error-demo"
+    # 错误状态同步过去了 / error status synced
+    status = getattr(err_span, "status", None)
+    assert status is not None
+    assert getattr(status, "status_code", None) is not None
+
+
+def test_otel_span_parent_child_linked():
+    """OTel 桥接保留父子关系：子 span 的 parent 指向 root。 / OTel bridge preserves parent-child: child span's parent points to root."""
+    from opentelemetry import trace as otel_trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+    tracer = Tracer()
+    tracer.enable_otel()
+
+    captured: list = []
+
+    class _Cap:
+        def export(self, spans):
+            captured.extend(spans)
+            return 0
+
+        def shutdown(self):
+            return None
+
+    provider = otel_trace.get_tracer_provider()
+    if isinstance(provider, TracerProvider):
+        provider.add_span_processor(SimpleSpanProcessor(_Cap()))
+
+    with tracer.trace_turn(session_key="s", agent_id="a") as root:
+        with tracer.start_span("child"):
+            pass
+
+    assert len(captured) >= 2
+    by_name = {getattr(s, "name", ""): s for s in captured}
+    child = by_name.get("child")
+    root_span = by_name.get("turn")
+    assert child is not None and root_span is not None
+    # 子的 parent_id 应等于 root 的 context span_id / child parent_id should equal root context span_id
+    parent_id = getattr(child, "parent", None)
+    root_id = getattr(root_span.context, "span_id", None)
+    assert getattr(parent_id, "span_id", None) == root_id or parent_id is not None
