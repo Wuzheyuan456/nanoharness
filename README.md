@@ -100,6 +100,20 @@ python -m nanoharness.observability.dashboard
 
 ---
 
+## 量化数据
+
+| 指标 | 数据来源 | 实测结果 |
+|------|---------|---------|
+| 路由分类准确率 | `benchmark_router.py` | 80.0%（20 条测试集） |
+| 路由 cost 节省 | `benchmark_router.py` | 42.1%（相对全用 T2） |
+| 成本效率 | `benchmark_router.py` | 0.53（每 1% 准确率换 0.53% 成本节省） |
+| 误判惩罚 | `benchmark_router.py` | 6（越低越好） |
+| Gateway P99 延迟 | `load_test_gateway.py` | P99≈32ms（车道层，隔离 LLM 延迟） |
+
+> 详细优化过程见 [docs/路由优化记录.md](docs/路由优化记录.md)
+
+---
+
 ## 技术栈
 
 | 维度 | 选型 | 理由 |
