@@ -110,6 +110,93 @@ python -m nanoharness.observability.dashboard
 
 > 真实数据需配置 `ANTHROPIC_API_KEY` 后跑 benchmark 脚本获取。mock 模式仅验证流程，数据无参考价值。
 
+### 基线测试结果（2026-07-31）
+
+使用内部 API 网关跑的基线数据。API 网关没有 haiku 模型，T0 分类用 sonnet-4-6 代替。
+
+#### claude-sonnet-4-6 基线
+
+**LLMRouter 路由分类**
+
+| 指标 | 数值 |
+|------|------|
+| 准确率 | 17/24 = 70.8% |
+| 档位分布 | T0=37, T1=58, T2=16, T3=21 |
+| 相对成本 | 424.7 (baseline 132.0) |
+| cost 节省 | -221.7%（负数说明比 baseline 更贵，sonnet-4-6 成本权重高于 haiku） |
+
+**错判方向**（预期→实际: 次数）：
+- T1→T0: 5（sonnet-4-6 倾向把中等任务判为简单任务）
+- T2→T1: 1
+- T2→T3: 1
+
+**上下文压缩**
+
+| 指标 | 数值 |
+|------|------|
+| 压缩前 | 26 条消息, 1053 tokens |
+| 压缩后 | 3 条消息, 138 tokens |
+| Token 削减 | 1053 → 138 (−86.9%) |
+| 摘要保留 | 1 条摘要消息，包含关键信息（调研摘要、Python→Rust 迁移评估） |
+
+#### qwen3.7-plus 基线
+
+**LLMRouter 路由分类**
+
+| 指标 | 数值 |
+|------|------|
+| 准确率 | 16/24 = 66.7% |
+| 档位分布 | T0=21, T1=40, T2=10, T3=13 |
+| 相对成本 | 267.1 (baseline 84.0) |
+| cost 节省 | -218.0% |
+
+**错判方向**（预期→实际: 次数）：
+- T1→T0: 4
+- T2→T1: 2
+- T0→T1: 1
+- T2→T3: 1
+
+**上下文压缩**
+
+| 指标 | 数值 |
+|------|------|
+| 压缩前 | 26 条消息, 1053 tokens |
+| 压缩后 | 3 条消息, 111 tokens |
+| Token 削减 | 1053 → 111 (−89.5%) |
+
+#### qwen3.6-flash 基线
+
+**LLMRouter 路由分类**
+
+| 指标 | 数值 |
+|------|------|
+| 准确率 | 15/24 = 62.5% |
+| 档位分布 | T0=55, T1=95, T2=24, T3=30 |
+| 相对成本 | 622.5 (baseline 204.0) |
+| cost 节省 | -205.1% |
+
+**错判方向**（预期→实际: 次数）：
+- T1→T0: 4
+- T2→T1: 2
+- T0→T1: 1
+- T2→T3: 1
+- T3→T2: 1
+
+**上下文压缩**
+
+| 指标 | 数值 |
+|------|------|
+| 压缩前 | 26 条消息, 1053 tokens |
+| 压缩后 | 3 条消息, 143 tokens |
+| Token 削减 | 1053 → 143 (−86.4%) |
+
+**重要性评分样例**（tool_result 应高于 assistant text）：
+- `[1] role=assistant is_tool_result=False score=0.215`
+- `[2] role=user is_tool_result=True score=0.446`
+- `[3] role=assistant is_tool_result=False score=0.231`
+
+> 测试命令：`ANTHROPIC_API_KEY=sk-... ANTHROPIC_BASE_URL=https://api-ad-ops-dev-advibe.nioint.com python scripts/benchmark_router.py`
+
 ---
 
 ## 技术栈

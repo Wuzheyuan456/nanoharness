@@ -83,7 +83,7 @@ def build_router(real: bool) -> LLMRouter:
     if real:
         # 路由分类用 T0（haiku），成本最低 / Route classification uses T0 (haiku), lowest cost
         provider = AnthropicProvider(
-            model_id="claude-haiku-4-5-20251001",
+            model_id="qwen3.6-flash",
             api_key=os.environ["ANTHROPIC_API_KEY"],
         )
     else:
@@ -93,6 +93,7 @@ def build_router(real: bool) -> LLMRouter:
         provider=provider,
         registry=TierRegistry(),   # 默认即 DEFAULT_TIER_CONFIGS，无需传参 / defaults to DEFAULT_TIER_CONFIGS, no args needed
         decision_log=DecisionLog("router_decisions.db"),
+        timeout=30.0,  # qwen3.7-plus 响应较慢，增加超时时间 / qwen3.7-plus is slower, increase timeout
     )
 
 

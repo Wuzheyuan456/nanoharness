@@ -29,7 +29,7 @@ class TierConfig:
 DEFAULT_TIER_CONFIGS: dict[Tier, TierConfig] = {
     Tier.T0: TierConfig(
         tier=Tier.T0,
-        model_id="claude-haiku-4-5-20251001",
+        model_id="claude-sonnet-4-6",
         max_tokens=1024,
         description="简单问答，最低成本",
     ),
@@ -41,13 +41,13 @@ DEFAULT_TIER_CONFIGS: dict[Tier, TierConfig] = {
     ),
     Tier.T2: TierConfig(
         tier=Tier.T2,
-        model_id="claude-sonnet-5",
+        model_id="claude-sonnet-4-6",
         max_tokens=8192,
         description="复杂任务，长链推理",
     ),
     Tier.T3: TierConfig(
         tier=Tier.T3,
-        model_id="claude-opus-4-8",
+        model_id="claude-opus-4-7",
         max_tokens=16384,
         thinking_budget=10000,
         description="高风险决策，extended thinking",

@@ -131,7 +131,7 @@ async def run_benchmark(real: bool) -> dict:
 
     provider = (
         AnthropicProvider(
-            model_id="claude-haiku-4-5-20251001",
+            model_id="qwen3.6-flash",
             api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         ) if real else _MockSummaryProvider()
     )
