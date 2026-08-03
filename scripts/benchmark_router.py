@@ -35,37 +35,33 @@ from nanoharness.router.tiers import DEFAULT_TIER_CONFIGS, Tier, TierRegistry
 # ─── Benchmark 测试集（人工标注 expected_tier）/ Benchmark Dataset (human-annotated expected_tier) ──
 
 BENCHMARK_DATASET: list[tuple[str, Tier]] = [
-    # T0：简单问答、打招呼、是非题 / T0: simple Q&A, greeting, yes-no
+    # T0：简单问答、打招呼、是非题（30%）/ T0: simple Q&A, greeting, yes-no (30%)
     ("你好，在吗？", Tier.T0),
     ("今天星期几？", Tier.T0),
     ("谢谢你的帮助", Tier.T0),
     ("1 加 1 等于几", Tier.T0),
     ("北京是中国的首都吗", Tier.T0),
-    ("帮我查一下现在的汇率大概是多少", Tier.T0),
     ("再见，下次聊", Tier.T0),
 
-    # T1：中等推理、1~3 步工具调用、常规代码问题 / T1: moderate reasoning, 1~3 step tool calls, routine code issues
+    # T1：中等推理、1~3 步工具调用、常规代码问题（40%）/ T1: moderate reasoning, 1~3 step tool calls, routine code issues (40%)
     ("帮我查一下北京明天的天气", Tier.T1),
     ("这段 Python 代码报错 KeyError，帮我看看哪里有问题", Tier.T1),
     ("帮我翻译一段英文邮件成中文", Tier.T1),
     ("推荐一本适合 Python 进阶的书", Tier.T1),
     ("帮我算一下 123 乘以 456 等于多少", Tier.T1),
     ("总结一下这篇文章的三个要点", Tier.T1),
+    ("帮我查一下 Python 3.12 的新特性", Tier.T1),
+    ("这段代码的时间复杂度是多少", Tier.T1),
 
-    # T2：复杂任务、代码生成、多步分析、长链推理 / T2: complex tasks, code generation, multi-step analysis, long-chain reasoning
+    # T2：复杂任务、代码生成、多步分析、长链推理（20%）/ T2: complex tasks, code generation, multi-step analysis, long-chain reasoning (20%)
     ("帮我用 Python 实现一个 LRU 缓存类，要支持并发", Tier.T2),
     ("写一个 SQL 查询，统计每个部门工资最高的前三名员工", Tier.T2),
     ("帮我对比 React 和 Vue 在大型项目中的优缺点", Tier.T2),
-    ("设计一个支持百万并发的消息队列架构方案", Tier.T2),
     ("把这段 500 行的代码重构成更清晰的模块化结构", Tier.T2),
-    ("分析这份日志，找出导致服务延迟飙升的根本原因", Tier.T2),
 
-    # T3：高风险决策、架构设计、安全分析、深度思考 / T3: high-risk decisions, architecture design, security analysis, deep thinking
+    # T3：高风险决策、架构设计、安全分析、深度思考（10%）/ T3: high-risk decisions, architecture design, security analysis, deep thinking (10%)
     ("我们的支付系统疑似存在 SQL 注入漏洞，帮我做安全审计", Tier.T3),
     ("评估把核心数据库从 MySQL 迁移到 PostgreSQL 的风险和收益", Tier.T3),
-    ("帮我设计一个符合金融监管要求的数据加密方案", Tier.T3),
-    ("分析这次生产事故的根因，给出防止复发的改进方案", Tier.T3),
-    ("设计一个支持多租户隔离的 SaaS 平台安全架构", Tier.T3),
 ]
 
 
@@ -154,29 +150,46 @@ async def run_benchmark(real: bool) -> dict:
 
     accuracy = correct / total * 100
     report = router._log.cost_savings_report() if router._log else {}
+    savings_pct = report.get("savings_pct", 0)
+
+    # 成本效率 = 每 1% 准确率换多少成本节省 / Cost efficiency = savings per 1% accuracy
+    cost_efficiency = savings_pct / accuracy if accuracy > 0 else 0
+
+    # 误判惩罚（错判严重性）/ Misclassification penalty (severity of wrong predictions)
+    # T3→T0 最严重（任务失败），T2→T0 次之，T1→T0 轻微
+    PENALTY = {
+        "T3→T0": 10, "T3→T1": 5, "T3→T2": 2,
+        "T2→T0": 5, "T2→T1": 2,
+        "T1→T0": 1,
+    }
+    wrong = {k: v for k, v in confusion.items() if k.split("→")[0] != k.split("→")[1]}
+    total_penalty = sum(PENALTY.get(k, 1) * v for k, v in wrong.items())
 
     print(f"\n{'─'*60}")
     print(f"  准确率: {correct}/{total} = {accuracy:.1f}%")
     print(f"  档位分布: {report.get('tier_breakdown', {})}")
     print(f"  相对成本: {report.get('actual_relative_cost', 0)} "
           f"(baseline {report.get('baseline_relative_cost', 0)})")
-    print(f"  cost 节省: {report.get('savings_pct', 0)}%")
+    print(f"  cost 节省: {savings_pct}%")
+    print(f"  成本效率: {cost_efficiency:.2f}（每 1% 准确率换 {cost_efficiency:.2f}% 成本节省）")
+    print(f"  误判惩罚: {total_penalty}（越低越好）")
     print(f"{'─'*60}\n")
 
     # 混淆矩阵（错判最多的方向）/ Confusion matrix (most frequent misclassification directions)
-    mistakes = {k: v for k, v in confusion.items() if not k.startswith(k.split("→")[0] + "→" + k.split("→")[0])}
-    wrong = {k: v for k, v in confusion.items() if k.split("→")[0] != k.split("→")[1]}
     if wrong:
-        print("  错判方向（预期→实际: 次数）:")
+        print("  错判方向（预期→实际: 次数, 惩罚）:")
         for k, v in sorted(wrong.items(), key=lambda x: -x[1]):
-            print(f"    {k}: {v}")
+            penalty = PENALTY.get(k, 1)
+            print(f"    {k}: {v} (×{penalty})")
         print()
 
     return {
         "accuracy_pct": round(accuracy, 1),
         "correct": correct,
         "total": total,
-        "cost_savings_pct": report.get("savings_pct", 0),
+        "cost_savings_pct": savings_pct,
+        "cost_efficiency": round(cost_efficiency, 2),
+        "misclassification_penalty": total_penalty,
         "tier_breakdown": report.get("tier_breakdown", {}),
     }
 

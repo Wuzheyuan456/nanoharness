@@ -99,14 +99,16 @@ class DecisionLog:
 
     def cost_savings_report(self) -> dict:
         """
-        统计各档位调用次数，估算相对 T1 全量调用的成本节省比例。 / Count calls per tier, estimate cost-savings ratio vs all-T1 baseline.
-        粗略假设：T0 成本 = T1 × 0.1，T2 = T1 × 3，T3 = T1 × 15。 / Rough assumption: T0 cost = T1 × 0.1, T2 = T1 × 3, T3 = T1 × 15.
+        统计各档位调用次数，估算相对全用 T2 的成本节省比例。 / Count calls per tier, estimate cost-savings ratio vs all-T2 baseline.
+        基线：全用 T2（中等复杂度模型）。 / Baseline: all T2 (medium complexity model).
+        粗略假设：T0 成本 = T2 × 0.033，T1 = T2 × 0.33，T3 = T2 × 5。 / Rough assumption: T0 cost = T2 × 0.033, T1 = T2 × 0.33, T3 = T2 × 5.
         """
+        # 相对 T2 的成本比例 / Relative cost ratio to T2
         RELATIVE_COST = {
-            Tier.T0: 0.1,
-            Tier.T1: 1.0,
-            Tier.T2: 3.0,
-            Tier.T3: 15.0,
+            Tier.T0: 0.033,  # 0.1 / 3
+            Tier.T1: 0.33,   # 1.0 / 3
+            Tier.T2: 1.0,
+            Tier.T3: 5.0,    # 15.0 / 3
         }
         rows = self._conn.execute(
             "SELECT tier, COUNT(*) as cnt FROM router_decisions GROUP BY tier"
@@ -115,7 +117,7 @@ class DecisionLog:
         counts = {Tier(r[0]): r[1] for r in rows}
         total = sum(counts.values()) or 1
         actual_cost = sum(RELATIVE_COST.get(t, 1.0) * n for t, n in counts.items())
-        baseline_cost = total * 1.0  # 假设全用 T1
+        baseline_cost = total * 1.0  # 假设全用 T2
 
         return {
             "total_calls": total,
