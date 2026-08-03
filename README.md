@@ -102,13 +102,13 @@ python -m nanoharness.observability.dashboard
 
 ## 量化数据
 
-| 指标 | 数据来源 | 跑法 |
-|------|---------|------|
-| 上下文压缩 Token 降低 X% | `benchmark_compaction.py` | mock 模式 −93.8%，真实数据见脚本输出 |
-| LLM 调用成本降低 Y% | `benchmark_router.py` | `cost_savings_report()` 输出 savings_pct |
-| Gateway P99 延迟 | `load_test_gateway.py` | 50 并发下 P99≈32ms（车道层，隔离 LLM 延迟） |
+| 指标 | 数据来源 | 实测结果 |
+|------|---------|---------|
+| 上下文压缩 Token 削减 | `benchmark_compaction.py` | 86.9%~89.5%（26 条消息压缩到 3 条） |
+| 路由分类准确率 | `benchmark_router.py` | 62.5%~70.8%（24 条测试集） |
+| Gateway P99 延迟 | `load_test_gateway.py` | P99≈32ms（车道层，隔离 LLM 延迟） |
 
-> 真实数据需配置 `ANTHROPIC_API_KEY` 后跑 benchmark 脚本获取。mock 模式仅验证流程，数据无参考价值。
+> 详细数据见下方基线测试结果。
 
 ### 基线测试结果（2026-07-31）
 
