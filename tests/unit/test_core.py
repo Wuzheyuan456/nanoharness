@@ -216,6 +216,22 @@ async def test_compaction_turn_boundary_protection():
         assert not messages[safe_cut - 1].is_tool_use(), "Cut must not follow tool_use without tool_result"
 
 
+def test_estimate_tokens_cjk():
+    """_estimate_tokens 对中文字符使用 2 字符/token 估算，英文使用 4 字符/token。 / _estimate_tokens uses 2 chars/token for CJK, 4 for ASCII."""
+    from nanoharness.core.compaction import _estimate_tokens
+    from nanoharness.core.context import Message
+
+    cjk_msg = Message(role="user", content="这" * 100)     # 100 CJK chars → 50 tokens
+    assert _estimate_tokens(cjk_msg) == 50
+
+    ascii_msg = Message(role="user", content="a" * 100)    # 100 ASCII chars → 25 tokens
+    assert _estimate_tokens(ascii_msg) == 25
+
+    # 混合文本：50 CJK + 100 ASCII = 25 + 25 = 50 tokens / Mixed: 50 CJK + 100 ASCII = 25 + 25 = 50 tokens
+    mixed_msg = Message(role="user", content="这" * 50 + "a" * 100)
+    assert _estimate_tokens(mixed_msg) == 50
+
+
 # ── 工具返回契约 / Tool Result Contract ────────────────────────────────────────
 
 def test_tool_result_contract_wraps_bare_string():

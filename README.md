@@ -68,7 +68,7 @@ nanoharness serve --port 8080           # 浏览器开 http://localhost:8080/doc
 python scripts/benchmark_router.py          # LLM Router 成本节省%
 python scripts/benchmark_compaction.py      # 上下文压缩降本%
 
-# ④ 跑测试（150 个，含行为指纹测试）
+# ④ 跑测试（183 个，含行为指纹测试）
 python -m pytest -v
 
 # ⑤ Gateway 压测
@@ -98,6 +98,9 @@ python -m nanoharness.observability.dashboard
 
 ### 5. 辩论模式真独立视角
 两个 Reviewer 用完全独立的 session_key + AgentContext，asyncio.gather 并行——物理上不可能看到对方历史。Judge 识别分歧不取平均。
+
+### 10+1. Orchestrator 两项增强
+**任务依赖图**：`SubtaskSpec.depends_on` 声明任务间依赖，`_execute_with_deps()` 用 `asyncio.Event` 实现拓扑调度——无依赖的子任务并行，有依赖的等依赖完成后启动，DFS 环路检测兜底防死锁。**Worker 负载感知路由**：多候选 AgentCard 时按 `_active_counts`（当前活跃 Worker 数）选最空闲的，进入 `_run_worker` 时 +1、`finally` -1，asyncio 单线程保证无竞态。
 
 ### 6. 行为指纹测试框架
 `BehaviorFingerprint` 区分 `tools_called`（LLM 请求）和 `tools_executed`（成功执行）。安全断言检查 `must_not_execute_tools ∩ tools_executed = ∅`——攻击者骗 LLM 请求危险工具，执行层拦截。

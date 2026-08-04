@@ -142,7 +142,6 @@ async def run_benchmark(real: bool) -> dict:
         context_window_limit=180_000,
         keep_recent_messages=6,
         keep_budget_tokens=300,    # 故意调小，让压缩明显触发 / intentionally small so compaction clearly triggers
-        safety_margin=0.10,
     )
     engine = CompactionEngine(provider=provider, config=config)
 

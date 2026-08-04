@@ -25,20 +25,32 @@ _ORCHESTRATION_DEPTH: ContextVar[int] = ContextVar("_orchestration_depth", defau
 # ─── 系统提示 / System prompts ─────────────────────────────────────────────────
 
 _DECOMPOSE_SYSTEM = """\
-你是任务分解专家。把用户的复杂任务拆成 2~5 个可以独立并行执行的子任务。
+你是任务分解专家。把用户的复杂任务拆成 2~5 个子任务。
 
-只输出 JSON，格式如下：
+分析子任务之间是否有顺序依赖：
+- 如果子任务 B 必须用到子任务 A 的结果，在 B.depends_on 里填 A 的 index
+- 没有依赖的子任务会并行执行；有依赖的等依赖完成后才启动
+- 优先设计独立子任务（depends_on 为空），只有业务上必须串行时才加依赖
+
+只输出 JSON，格式如下（子任务按 0、1、2… 顺序编号）：
 {
   "subtasks": [
     {
+      "index": 0,
       "description": "子任务的详细描述，包含足够的上下文",
-      "required_capability": "需要的能力关键词（如 code_review / search / summarize / math）"
+      "required_capability": "需要的能力关键词（如 code_review / search / summarize / math）",
+      "depends_on": []
+    },
+    {
+      "index": 1,
+      "description": "基于子任务 0 的结果进一步处理",
+      "required_capability": "writing",
+      "depends_on": [0]
     }
   ]
 }
 
 注意：
-- 每个子任务必须是自包含的，不依赖其他子任务的输出
 - 如果任务本身已经足够简单，输出 1 个子任务即可
 - required_capability 要精确，这决定了哪个 Agent 会处理这个子任务
 """
@@ -57,6 +69,7 @@ class SubtaskSpec:
     index: int
     description: str
     required_capability: str
+    depends_on: list[int] = field(default_factory=list)   # 依赖的子任务 index 列表，为空则可立即并行执行 / list of dependency indices; empty means can run immediately in parallel
 
 
 @dataclass
@@ -116,6 +129,7 @@ class Orchestrator:
         self._max_workers = max_workers
         self._max_depth = max_depth
         self._fallback_capability = fallback_capability
+        self._active_counts: dict[str, int] = {}   # agent_id → 当前活跃 Worker 数，用于负载感知路由 / agent_id → active worker count for load-aware routing
 
     async def run(
         self,
@@ -148,13 +162,8 @@ class Orchestrator:
             specs = specs[: self._max_workers]   # 截断，避免瞬发过多 API call / truncate to avoid bursting too many API calls
             log.info("任务拆解完成: 共 %d 个子任务", len(specs))
 
-            # 2+3. 路由 + 并行执行 / 2+3. Route + parallel execution
-            results: list[SubtaskResult] = list(
-                await asyncio.gather(*[
-                    self._run_worker(spec, self._route(spec), parent_ctx.session_key)
-                    for spec in specs
-                ])
-            )
+            # 2+3. 路由 + 依赖感知执行：无依赖的子任务并行，有依赖的等待依赖完成后启动 / 2+3. Route + dependency-aware execution: independent subtasks run in parallel, deps wait
+            results = await self._execute_with_deps(specs, parent_ctx.session_key)
 
             # 4. 综合 / 4. Synthesize
             synth_provider = self._get_provider("T1")
@@ -187,13 +196,18 @@ class Orchestrator:
         if data is None:
             return [SubtaskSpec(0, task, self._fallback_capability)]
 
+        raw = data.get("subtasks", [])
         specs: list[SubtaskSpec] = []
-        for i, item in enumerate(data.get("subtasks", [])):
+        for i, item in enumerate(raw):
             if isinstance(item, dict) and item.get("description"):
+                raw_deps = item.get("depends_on", [])
+                # 只保留合法索引（整数且在 [0, len(raw)) 范围内）/ Keep only valid indices (int within [0, len(raw)))
+                deps = [int(d) for d in raw_deps if isinstance(d, (int, float)) and 0 <= int(d) < len(raw) and int(d) != i]
                 specs.append(SubtaskSpec(
                     index=i,
                     description=item["description"],
                     required_capability=item.get("required_capability", self._fallback_capability),
+                    depends_on=deps,
                 ))
 
         return specs or [SubtaskSpec(0, task, self._fallback_capability)]
@@ -201,14 +215,17 @@ class Orchestrator:
     # ── 路由 / Route ──────────────────────────────────────────────────────────────
 
     def _route(self, spec: SubtaskSpec) -> AgentCard:
-        """按 required_capability 找 AgentCard，多级兜底保证永不失败 / Find an AgentCard by required_capability; multi-level fallback guarantees it never fails."""
+        """
+        按 required_capability 找 AgentCard，多级兜底保证永不失败 / Find an AgentCard by required_capability; multi-level fallback guarantees it never fails.
+        有多个候选时选当前活跃任务最少的（负载感知）/ When multiple candidates exist, pick the least busy one (load-aware).
+        """
         candidates = self._registry.lookup_by_capability(spec.required_capability)
-        if candidates:
-            return candidates[0]
-        general = self._registry.lookup_by_capability(self._fallback_capability)
-        if general:
-            return general[0]
-        return _FALLBACK_CARD
+        if not candidates:
+            candidates = self._registry.lookup_by_capability(self._fallback_capability)
+        if not candidates:
+            return _FALLBACK_CARD
+        # 负载感知：活跃 Worker 数最少的优先 / Load-aware: prefer candidate with fewest active workers
+        return min(candidates, key=lambda c: self._active_counts.get(c.agent_id, 0))
 
     # ── 执行 Worker / Execute Worker ─────────────────────────────────────────────
 
@@ -227,30 +244,35 @@ class Orchestrator:
         t0 = time.monotonic()
         worker_session = f"{parent_session_key}#worker-{spec.index}-{uuid.uuid4().hex[:6]}"
 
-        provider = self._get_provider(card.default_tier)
-        ctx = AgentContext(
-            agent_id=card.agent_id,
-            session_key=worker_session,
-            system_prompt=card.system_prompt,
-            model_id=provider.model_id,
-        )
-        core = NanoCore(
-            ctx=ctx,
-            provider=provider,
-            tools=card.tools,
-            tool_definitions=card.tool_definitions,
-        )
-
-        output = ""
-        success = True
+        # 负载计数：进入时 +1，退出时 -1（finally 保证） / Load tracking: +1 on entry, -1 on exit (guaranteed by finally)
+        self._active_counts[card.agent_id] = self._active_counts.get(card.agent_id, 0) + 1
         try:
-            async for event in core.run_turn(spec.description):
-                if isinstance(event, DoneEvent):
-                    output = event.final_text
-        except Exception as exc:
-            success = False
-            output = f"[Worker 错误: {exc}]"
-            log.warning("子任务 %d (%s) 失败: %s", spec.index, card.agent_id, exc)
+            provider = self._get_provider(card.default_tier)
+            ctx = AgentContext(
+                agent_id=card.agent_id,
+                session_key=worker_session,
+                system_prompt=card.system_prompt,
+                model_id=provider.model_id,
+            )
+            core = NanoCore(
+                ctx=ctx,
+                provider=provider,
+                tools=card.tools,
+                tool_definitions=card.tool_definitions,
+            )
+
+            output = ""
+            success = True
+            try:
+                async for event in core.run_turn(spec.description):
+                    if isinstance(event, DoneEvent):
+                        output = event.final_text
+            except Exception as exc:
+                success = False
+                output = f"[Worker 错误: {exc}]"
+                log.warning("子任务 %d (%s) 失败: %s", spec.index, card.agent_id, exc)
+        finally:
+            self._active_counts[card.agent_id] = max(0, self._active_counts.get(card.agent_id, 0) - 1)
 
         return SubtaskResult(
             spec=spec,
@@ -265,6 +287,48 @@ class Orchestrator:
         spec = SubtaskSpec(0, task, self._fallback_capability)
         card = self._route(spec)
         return await self._run_worker(spec, card, parent_session_key)
+
+    async def _execute_with_deps(
+        self,
+        specs: list[SubtaskSpec],
+        parent_session_key: str,
+    ) -> list[SubtaskResult]:
+        """
+        依赖感知执行 / Dependency-aware execution.
+
+        depends_on 为空的子任务立即并行启动；depends_on 非空的等待所有依赖的 asyncio.Event 置位后才启动。
+        检测到环路时降级为全并行（输出 WARNING）/ Falls back to full parallel on cycle detection (WARNING logged).
+
+        面试话术 / Interview talking point:
+        "每个子任务有一个 asyncio.Event，完成时 set()。
+        有依赖的子任务先 await 所有依赖的 Event，再开始执行——一行代码实现拓扑调度。
+        DFS 环路检测确保死锁不可能发生。
+        / Each subtask has an asyncio.Event that is set() on completion.
+        Subtasks with dependencies await their deps' Events before starting — topological scheduling in one line.
+        DFS cycle detection ensures deadlocks are impossible."
+        """
+        if _has_cycle(specs):
+            log.warning("检测到子任务依赖循环，降级为全并行执行 / Dependency cycle detected, falling back to full parallel")
+            return list(await asyncio.gather(*[
+                self._run_worker(spec, self._route(spec), parent_session_key)
+                for spec in specs
+            ]))
+
+        done_events: dict[int, asyncio.Event] = {spec.index: asyncio.Event() for spec in specs}
+        results: dict[int, SubtaskResult] = {}
+
+        async def run_one(spec: SubtaskSpec) -> None:
+            # 等待所有依赖完成 / Wait for all dependency subtasks to finish
+            for dep_idx in spec.depends_on:
+                if dep_idx in done_events:
+                    await done_events[dep_idx].wait()
+            card = self._route(spec)
+            result = await self._run_worker(spec, card, parent_session_key)
+            results[spec.index] = result
+            done_events[spec.index].set()
+
+        await asyncio.gather(*[run_one(spec) for spec in specs])
+        return [results[spec.index] for spec in sorted(specs, key=lambda s: s.index)]
 
     # ── 综合 / Synthesize ──────────────────────────────────────────────────────────
 
@@ -303,6 +367,33 @@ class Orchestrator:
             if p is not None:
                 return p
         raise RuntimeError(f"provider_factory 中找不到 tier={tier} 或兜底档位，请检查配置")
+
+
+# ─── 依赖图工具 / Dependency graph helpers ──────────────────────────────────────
+
+def _has_cycle(specs: list[SubtaskSpec]) -> bool:
+    """
+    DFS 检测子任务依赖图中是否存在环路 / Detect cycles in the subtask dependency graph using DFS.
+    有环时应降级为全并行，防止死锁 / On cycle, fall back to full parallel to prevent deadlock.
+    """
+    specs_by_idx: dict[int, SubtaskSpec] = {s.index: s for s in specs}
+    visited: set[int] = set()
+    visiting: set[int] = set()   # 当前 DFS 栈上的节点 / nodes currently on the DFS stack
+
+    def dfs(idx: int) -> bool:
+        if idx in visiting:
+            return True     # 发现回边 → 有环 / back-edge found → cycle
+        if idx in visited:
+            return False
+        visiting.add(idx)
+        for dep in specs_by_idx.get(idx, SubtaskSpec(idx, "", "")).depends_on:
+            if dfs(dep):
+                return True
+        visiting.discard(idx)
+        visited.add(idx)
+        return False
+
+    return any(dfs(s.index) for s in specs)
 
 
 # ─── 模块级常量 / Module-level constants ───────────────────────────────────────

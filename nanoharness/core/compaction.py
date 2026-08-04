@@ -20,7 +20,6 @@ class CompactionConfig:
     context_window_limit: int = 180_000       # 触发压缩前的 token 数 / tokens before compaction triggers
     keep_recent_messages: int = 10            # 始终保留最后 N 条消息 / always preserve last N messages
     keep_budget_tokens: int = 20_000          # 压缩后剩余 token 的目标值 / target remaining tokens after compact
-    safety_margin: float = 0.10              # 在 keep_budget 之上的额外缓冲 / extra buffer on top of keep_budget
 
 
 # ─── Turn 边界辅助 / Turn-boundary helpers ────────────────────────────────────
@@ -179,6 +178,7 @@ class CompactionEngine:
 # ─── Token 估算辅助 / Token estimate helper ────────────────────────────────────
 
 def _estimate_tokens(msg: Message) -> int:
-    if isinstance(msg.content, str):
-        return len(msg.content) // 4
-    return len(json.dumps(msg.content)) // 4
+    """粗略 token 估算：CJK 字符约 2 字符/token，ASCII 约 4 字符/token / Rough token estimate: CJK ~2 chars/token, ASCII ~4 chars/token."""
+    text = msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
+    cjk = sum(1 for c in text if "一" <= c <= "鿿" or "　" <= c <= "〿")
+    return cjk // 2 + (len(text) - cjk) // 4

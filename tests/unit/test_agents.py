@@ -23,6 +23,7 @@ from nanoharness.agents.orchestrator import (
     Orchestrator,
     SubtaskSpec,
     _ORCHESTRATION_DEPTH,
+    _has_cycle,
     _parse_json,
 )
 from nanoharness.agents.dispatcher import AgentDispatcher
@@ -348,6 +349,102 @@ class TestOrchestrator:
     def test_parse_json_total_failure_returns_none(self):
         assert _parse_json("完全不是 JSON") is None
         assert _parse_json("") is None
+
+    def test_dependency_graph_serial_execution(self):
+        """
+        depends_on=[0] 的子任务必须在 index=0 的子任务完成后才启动——验证拓扑调度。
+        用完成时间戳断言：task 1 的开始时间 >= task 0 的完成时间。
+        / A subtask with depends_on=[0] must not start until index=0 finishes — topological scheduling.
+        Asserts via finish timestamps: task 1 start >= task 0 finish.
+        """
+        import json as _json
+
+        reg = AgentRegistry()
+        reg.register(make_card("seq-agent", ["general"]))
+
+        decompose_resp = _json.dumps({
+            "subtasks": [
+                {"index": 0, "description": "先做A", "required_capability": "general", "depends_on": []},
+                {"index": 1, "description": "再做B（需要A完成）", "required_capability": "general", "depends_on": [0]},
+            ]
+        })
+        t0_prov = make_provider(decompose_resp)
+
+        call_order: list[int] = []
+        finish_times: dict[int, float] = {}
+        start_times: dict[int, float] = {}
+        call_counter = {"n": 0}
+
+        async def tracked_stream(*a, **kw):
+            idx = call_counter["n"]
+            call_counter["n"] += 1
+            start_times[idx] = time.monotonic()
+            await asyncio.sleep(0.03)   # 模拟 30ms 工作 / simulate 30ms work
+            finish_times[idx] = time.monotonic()
+            resp = LLMResponse(
+                raw_content=[{"type": "text", "text": "done"}],
+                stop_reason="end_turn",
+                input_tokens=5,
+                output_tokens=2,
+                final_text="done",
+            )
+            yield StreamChunk(is_final=True, final_response=resp)
+
+        worker_prov = MagicMock()
+        worker_prov.model_id = "mock-T1"
+        worker_prov.stream = tracked_stream
+        worker_prov.count_tokens = MagicMock(return_value=10)
+        worker_prov.complete = AsyncMock(return_value=LLMResponse(
+            raw_content=[{"type": "text", "text": "综合"}],
+            stop_reason="end_turn",
+            input_tokens=5,
+            output_tokens=2,
+            final_text="综合",
+        ))
+
+        orc = Orchestrator(registry=reg, provider_factory={"T0": t0_prov, "T1": worker_prov})
+        result = asyncio.run(orc.run("顺序任务", make_ctx()))
+
+        assert len(result.subtask_results) == 2
+        # task 1（有依赖）开始时间不早于 task 0 完成时间（留 5ms 误差容忍）/ task 1 (has dep) starts no earlier than task 0 finishes (5ms tolerance)
+        assert start_times[1] >= finish_times[0] - 0.005, (
+            f"task 1 started before task 0 finished: start={start_times[1]:.3f} finish={finish_times[0]:.3f}"
+        )
+
+    def test_load_aware_routing_prefers_less_busy_agent(self):
+        """
+        多个候选 Agent 时，路由选当前活跃 Worker 最少的——负载感知。
+        / With multiple candidate Agents, route picks the one with fewest active workers — load-aware.
+        """
+        reg = AgentRegistry()
+        reg.register(make_card("busy-agent", ["math"]))
+        reg.register(make_card("idle-agent", ["math"]))
+
+        orc = Orchestrator(registry=reg, provider_factory={"T0": make_provider(), "T1": make_provider()})
+
+        # 模拟 busy-agent 正处理 2 个任务 / Simulate busy-agent handling 2 active tasks
+        orc._active_counts["busy-agent"] = 2
+        orc._active_counts["idle-agent"] = 0
+
+        card = orc._route(SubtaskSpec(0, "数学计算", "math"))
+        assert card.agent_id == "idle-agent", "应路由到负载更低的 idle-agent"
+
+    def test_has_cycle_detects_cycle(self):
+        """_has_cycle 检测到环路（A→B→A）返回 True。 / _has_cycle detects a cycle (A→B→A) and returns True."""
+        specs = [
+            SubtaskSpec(0, "A", "general", depends_on=[1]),
+            SubtaskSpec(1, "B", "general", depends_on=[0]),
+        ]
+        assert _has_cycle(specs) is True
+
+    def test_has_cycle_no_cycle(self):
+        """线性依赖链（0→1→2）无环，_has_cycle 返回 False。 / A linear dependency chain (0→1→2) has no cycle; _has_cycle returns False."""
+        specs = [
+            SubtaskSpec(0, "A", "general", depends_on=[]),
+            SubtaskSpec(1, "B", "general", depends_on=[0]),
+            SubtaskSpec(2, "C", "general", depends_on=[1]),
+        ]
+        assert _has_cycle(specs) is False
 
 
 # ─── DebateOrchestrator ───────────────────────────────────────────────────────
