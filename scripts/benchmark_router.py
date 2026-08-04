@@ -35,15 +35,21 @@ from nanoharness.router.tiers import DEFAULT_TIER_CONFIGS, Tier, TierRegistry
 # ─── Benchmark 测试集（人工标注 expected_tier）/ Benchmark Dataset (human-annotated expected_tier) ──
 
 BENCHMARK_DATASET: list[tuple[str, Tier]] = [
-    # T0：简单问答、打招呼、是非题（30%）/ T0: simple Q&A, greeting, yes-no (30%)
+    # T0：简单问答、打招呼、是非题（30%，12 条）/ T0: simple Q&A, greeting, yes-no (30%, 12 items)
     ("你好，在吗？", Tier.T0),
     ("今天星期几？", Tier.T0),
     ("谢谢你的帮助", Tier.T0),
     ("1 加 1 等于几", Tier.T0),
     ("北京是中国的首都吗", Tier.T0),
     ("再见，下次聊", Tier.T0),
+    ("早上好", Tier.T0),
+    ("Python 是解释型语言吗", Tier.T0),
+    ("你能做什么", Tier.T0),
+    ("HTTP 状态码 404 是什么意思", Tier.T0),
+    ("什么是递归", Tier.T0),
+    ("帮我写个请假条", Tier.T0),
 
-    # T1：中等推理、1~3 步工具调用、常规代码问题（40%）/ T1: moderate reasoning, 1~3 step tool calls, routine code issues (40%)
+    # T1：中等推理、1~3 步工具调用、常规代码问题（40%，16 条）/ T1: moderate reasoning, 1~3 step tool calls, routine code issues (40%, 16 items)
     ("帮我查一下北京明天的天气", Tier.T1),
     ("这段 Python 代码报错 KeyError，帮我看看哪里有问题", Tier.T1),
     ("帮我翻译一段英文邮件成中文", Tier.T1),
@@ -52,16 +58,30 @@ BENCHMARK_DATASET: list[tuple[str, Tier]] = [
     ("总结一下这篇文章的三个要点", Tier.T1),
     ("帮我查一下 Python 3.12 的新特性", Tier.T1),
     ("这段代码的时间复杂度是多少", Tier.T1),
+    ("帮我查一下上海到北京的机票价格", Tier.T1),
+    ("这段 Java 代码为什么报 NullPointerException", Tier.T1),
+    ("帮我把这段中文翻译成英文", Tier.T1),
+    ("推荐几本关于机器学习的入门书籍", Tier.T1),
+    ("计算 1234 的平方根", Tier.T1),
+    ("总结一下这篇论文的主要贡献", Tier.T1),
+    ("帮我查一下最新的 iOS 版本", Tier.T1),
+    ("这段代码的空间复杂度是多少", Tier.T1),
 
-    # T2：复杂任务、代码生成、多步分析、长链推理（20%）/ T2: complex tasks, code generation, multi-step analysis, long-chain reasoning (20%)
+    # T2：复杂任务、代码生成、多步分析、长链推理（20%，8 条）/ T2: complex tasks, code generation, multi-step analysis, long-chain reasoning (20%, 8 items)
     ("帮我用 Python 实现一个 LRU 缓存类，要支持并发", Tier.T2),
     ("写一个 SQL 查询，统计每个部门工资最高的前三名员工", Tier.T2),
     ("帮我对比 React 和 Vue 在大型项目中的优缺点", Tier.T2),
     ("把这段 500 行的代码重构成更清晰的模块化结构", Tier.T2),
+    ("分析这段代码的性能瓶颈并提出优化方案", Tier.T2),
+    ("实现一个支持分页和排序的 RESTful API", Tier.T2),
+    ("帮我设计一个分布式事务系统", Tier.T2),
+    ("评估是否应该将单体应用拆分为微服务", Tier.T2),
 
-    # T3：高风险决策、架构设计、安全分析、深度思考（10%）/ T3: high-risk decisions, architecture design, security analysis, deep thinking (10%)
+    # T3：高风险决策、安全分析、深度思考（10%，4 条）/ T3: high-risk decisions, security analysis, deep thinking (10%, 4 items)
     ("我们的支付系统疑似存在 SQL 注入漏洞，帮我做安全审计", Tier.T3),
     ("评估把核心数据库从 MySQL 迁移到 PostgreSQL 的风险和收益", Tier.T3),
+    ("生产环境出现内存泄漏，帮我排查根因并给出修复方案", Tier.T3),
+    ("评估是否应该采用零信任安全架构", Tier.T3),
 ]
 
 
