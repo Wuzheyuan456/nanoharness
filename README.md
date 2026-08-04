@@ -19,8 +19,11 @@ NanoHarness
 │        agents/                      — AgentCard 注册（对齐 A2A）、Supervisor、辩论模式
 │        provider/                    — LLM 抽象（Anthropic / OpenAI）
 │        channels/                    — 多通道网关：信封抽象 + 车道隔离 + Telegram/Discord
+│        tools/                       — 内置工具：calculator / current_datetime / web_search
 └── L3  接入层
          observability/               — OTel 轻量追踪 + 四大黄金信号 + Gradio 面板
+         cli.py                       — 交互式对话 CLI（nanoharness chat）
+         server.py                    — OpenAI 兼容 HTTP API（/v1/chat/completions）
          scripts/                     — benchmark 量化数据 + Gateway 压测
 ```
 
@@ -46,19 +49,32 @@ NanoHarness
 ```bash
 # 环境（conda）
 conda activate nanoharness        # Python 3.12
+export ANTHROPIC_API_KEY=sk-ant-...
 
-# 跑测试（150 个，含行为指纹测试）
+# ① 交互式对话（一行启动 ReAct 智能体）
+nanoharness chat                        # 自动路由 T0~T3，内置三个工具
+nanoharness chat --tier T2              # 强制 T2 档位
+nanoharness chat --no-tools             # 纯对话模式
+
+# ② OpenAI 兼容 HTTP API 服务器
+nanoharness serve --port 8080           # 浏览器开 http://localhost:8080/docs
+
+# 接入示例（Python）：
+# from openai import OpenAI
+# client = OpenAI(base_url="http://localhost:8080/v1", api_key="any")
+# resp = client.chat.completions.create(model="nanoharness", messages=[...])
+
+# ③ 量化数据 benchmark（--mock 验证流程，不需要 API key）
+python scripts/benchmark_router.py          # LLM Router 成本节省%
+python scripts/benchmark_compaction.py      # 上下文压缩降本%
+
+# ④ 跑测试（150 个，含行为指纹测试）
 python -m pytest -v
 
-# 量化数据 benchmark（需 ANTHROPIC_API_KEY 跑真实数据，--mock 验证流程）
-export ANTHROPIC_API_KEY=sk-ant-...
-python scripts/benchmark_router.py          # LLM Router 成本节省%
-python scripts/benchmark_compaction.py       # 上下文压缩降本%
-
-# Gateway 压测
+# ⑤ Gateway 压测
 python scripts/load_test_gateway.py --concurrency 50 --rounds 3
 
-# 可视化面板（浏览器访问 http://localhost:7860）
+# ⑥ 可视化面板（浏览器访问 http://localhost:7860）
 python -m nanoharness.observability.dashboard
 ```
 
