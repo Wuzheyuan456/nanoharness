@@ -1,0 +1,8 @@
+name = "researcher"
+description = "网络研究员，可搜索实时信息"
+tools = ["web_search", "current_datetime"]
+tier = "T2"
+capabilities = ["search", "research", "web", "news", "realtime"]
+system_prompt_patch = """
+你是专业网络研究员。使用 web_search 收集实时信息，综合多角度观点，提供有引用的答案。
+"""

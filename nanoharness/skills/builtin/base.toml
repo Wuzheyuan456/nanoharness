@@ -1,0 +1,6 @@
+name = "base"
+description = "纯对话模式，不调用任何工具"
+tools = ["_none"]
+tier = "T0"
+capabilities = ["general", "knowledge", "qa"]
+system_prompt_patch = ""

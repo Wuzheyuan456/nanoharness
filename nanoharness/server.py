@@ -66,6 +66,8 @@ class ChatCompletionRequest(BaseModel):
     # NanoHarness 扩展：可选强制档位 / NanoHarness extension: optional tier override
     tier: str | None = Field(None, description="强制档位 T0/T1/T2/T3，否则自动路由")
     use_tools: bool = Field(True, description="是否启用内置工具")
+    # NanoHarness 扩展：激活指定技能（过滤工具 + 注入提示词补丁）/ activate a named skill (filter tools + inject prompt patch)
+    skill: str | None = Field(None, description="技能名称，如 'researcher'；优先级高于 use_tools")
 
 
 class ResponseMessage(BaseModel):
@@ -120,8 +122,11 @@ def create_app() -> FastAPI:
 # ── 路由注册 / Route registration ─────────────────────────────────────────────
 
 def _wire_routes(app: FastAPI) -> None:
+    from nanoharness.skills import SkillLoader, SkillRegistry
+
     registry = TierRegistry()
     tools, tool_defs = get_builtin_tools()
+    skill_registry = SkillRegistry()
 
     # ── 辅助：API key 提取 / Helper: API key extraction ──────────────────────
 
@@ -207,13 +212,26 @@ def _wire_routes(app: FastAPI) -> None:
             ],
         )
 
-        use_tools = req.use_tools
+        # skill 优先级高于 use_tools / skill takes priority over use_tools
+        if req.skill:
+            sk = skill_registry.lookup(req.skill)
+            if sk is None:
+                raise HTTPException(status_code=400, detail=f"找不到技能 '{req.skill}'")
+            active_tools, active_defs = SkillLoader.filter_tools(sk, tools, tool_defs)
+            system_prompt = SkillLoader.patch_system(sk, system_prompt)
+            ctx.system_prompt = system_prompt
+            ctx.active_skill = sk.name
+        elif not req.use_tools:
+            active_tools, active_defs = {}, []
+        else:
+            active_tools, active_defs = tools, tool_defs
+
         provider = AnthropicProvider(model_id=model_id, api_key=api_key)
         nano = NanoCore(
             ctx=ctx,
             provider=provider,
-            tools=tools if use_tools else {},
-            tool_definitions=tool_defs if use_tools else [],
+            tools=active_tools,
+            tool_definitions=active_defs,
         )
         return nano, ctx, last_user_content
 

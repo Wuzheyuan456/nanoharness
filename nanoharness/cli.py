@@ -5,6 +5,8 @@ NanoHarness CLI — 一行启动 ReAct 对话智能体 / One-line CLI to launch 
     nanoharness chat                  # 自动路由，交互式对话
     nanoharness chat --tier T2        # 强制 T2 档位
     nanoharness chat --no-tools       # 纯对话，不调工具
+    nanoharness chat --skill researcher  # 用 researcher 技能启动
+    nanoharness skills                # 列出所有可用技能
     nanoharness serve                 # 启动 OpenAI 兼容 HTTP 服务器
     nanoharness serve --port 8080     # 指定端口
 """
@@ -43,13 +45,14 @@ _DEFAULT_SYSTEM = """\
 """
 
 
-def _print_banner(tool_names: list[str]) -> None:
+def _print_banner(tool_names: list[str], skill_name: str | None = None) -> None:
     tools_str = ", ".join(tool_names) if tool_names else "（无）"
+    skill_str = f" [{skill_name}]" if skill_name else ""
     line = "═" * 54
     print(f"\n{_BOLD}╔{line}╗")
-    print(f"║  NanoHarness ReAct Agent{' ' * 28}║")
+    print(f"║  NanoHarness ReAct Agent{skill_str:<28}║")
     print(f"║  工具: {tools_str:<46}║")
-    print(f"║  输入 {_CYAN}quit{_BOLD} 退出，{_CYAN}Ctrl+C{_BOLD} 中断{' ' * 28}║")
+    print(f"║  输入 {_CYAN}quit{_BOLD} 退出，{_CYAN}/skill NAME{_BOLD} 切换技能{' ' * 20}║")
     print(f"╚{line}╝{_R}\n")
 
 
@@ -69,14 +72,33 @@ async def _run_chat(args: argparse.Namespace) -> None:
     from nanoharness.router.tiers import Tier, TierRegistry
     from nanoharness.tools import get_builtin_tools
 
+    from nanoharness.skills import SkillLoader, SkillRegistry
+
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         print(f"{_RED}错误: 未设置 ANTHROPIC_API_KEY{_R}")
         print(f"  {_DIM}配置方法: export ANTHROPIC_API_KEY=sk-ant-...{_R}")
         sys.exit(1)
 
-    tools, tool_defs = ({}, []) if args.no_tools else get_builtin_tools()
-    _print_banner(list(tools.keys()))
+    all_tools, all_tool_defs = ({}, []) if args.no_tools else get_builtin_tools()
+    skill_registry = SkillRegistry()
+    base_system = args.system or _DEFAULT_SYSTEM
+
+    # 启动时应用 --skill / Apply --skill at startup
+    active_skill_name: str | None = None
+    tools, tool_defs = all_tools, all_tool_defs
+    current_system = base_system
+    if getattr(args, "skill", None):
+        sk = skill_registry.lookup(args.skill)
+        if sk is None:
+            print(f"{_RED}错误: 找不到技能 '{args.skill}'。用 'nanoharness skills' 查看可用列表。{_R}")
+            sys.exit(1)
+        tools, tool_defs = SkillLoader.filter_tools(sk, all_tools, all_tool_defs)
+        current_system = SkillLoader.patch_system(sk, base_system)
+        active_skill_name = sk.name
+        print(f"{_CYAN}[Skill] {sk.name} 已激活 → 工具: {sk.tool_summary()}{_R}")
+
+    _print_banner(list(tools.keys()), active_skill_name)
 
     registry = TierRegistry()
     forced_tier = Tier[args.tier] if args.tier else None
@@ -99,8 +121,9 @@ async def _run_chat(args: argparse.Namespace) -> None:
     ctx = AgentContext(
         agent_id="cli-agent",
         session_key="cli-session",
-        system_prompt=args.system or _DEFAULT_SYSTEM,
+        system_prompt=current_system,
         model_id=default_model,
+        active_skill=active_skill_name,
     )
 
     turn_count = 0
@@ -116,6 +139,30 @@ async def _run_chat(args: argparse.Namespace) -> None:
         if user_input.lower() in ("quit", "exit", "bye", "再见", "q"):
             print(f"{_DIM}再见！{_R}")
             break
+
+        # ── /skills 内联命令：列出可用技能 / Inline /skills command: list available skills ──
+        if user_input.strip() == "/skills":
+            skills = skill_registry.list_all()
+            print(f"\n{_BOLD}可用技能 ({len(skills)} 个):{_R}")
+            for s in skills:
+                marker = " ◀ 当前" if s.name == ctx.active_skill else ""
+                print(f"  {_CYAN}{s.name:<12}{_R} {s.description}  {_DIM}[{s.tool_summary()}]{_R}{marker}")
+            print(f"\n  用法: /skill <name>\n")
+            continue
+
+        # ── /skill NAME 内联命令：热换技能 / Inline /skill NAME: hot-swap skill ──
+        if user_input.startswith("/skill "):
+            skill_name = user_input[7:].strip()
+            sk = skill_registry.lookup(skill_name)
+            if sk is None:
+                print(f"{_RED}[Skill] 找不到 '{skill_name}'。输入 /skills 查看可用列表。{_R}")
+            else:
+                tools, tool_defs = SkillLoader.filter_tools(sk, all_tools, all_tool_defs)
+                current_system = SkillLoader.patch_system(sk, base_system)
+                ctx.system_prompt = current_system
+                ctx.active_skill = sk.name
+                print(f"{_CYAN}[Skill] → {sk.name}  工具: {sk.tool_summary()}{_R}")
+            continue
 
         turn_count += 1
 
@@ -147,7 +194,7 @@ async def _run_chat(args: argparse.Namespace) -> None:
         nano = NanoCore(
             ctx=ctx,
             provider=provider,
-            tools=tools,
+            tools=tools,           # 可能已被 /skill 热换 / may have been hot-swapped by /skill
             tool_definitions=tool_defs,
         )
 
@@ -195,6 +242,26 @@ async def _run_chat(args: argparse.Namespace) -> None:
         print()
 
 
+def _run_skills(_args: argparse.Namespace) -> None:
+    """列出所有可用技能 / List all available skills."""
+    from nanoharness.skills import SkillRegistry
+
+    skill_registry = SkillRegistry()
+    skills = skill_registry.list_all()
+
+    line = "═" * 54
+    print(f"\n{_BOLD}╔{line}╗")
+    print(f"║  NanoHarness Skills{' ' * 34}║")
+    print(f"╚{line}╝{_R}\n")
+
+    for s in skills:
+        print(f"  {_CYAN}{_BOLD}{s.name}{_R}")
+        print(f"    {s.description}")
+        print(f"    {_DIM}工具: {s.tool_summary()}  tier: {s.tier}  capabilities: {', '.join(s.capabilities) or '—'}{_R}\n")
+
+    print(f"  {_DIM}用法: nanoharness chat --skill <name>{_R}\n")
+
+
 def _run_serve(args: argparse.Namespace) -> None:
     try:
         import uvicorn
@@ -225,10 +292,12 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "示例:\n"
-            "  nanoharness chat              # 自动路由对话\n"
-            "  nanoharness chat --tier T2    # 强制 T2 档位\n"
-            "  nanoharness serve             # 启动 API 服务器 (port 8080)\n"
-            "  nanoharness serve --port 9000 # 自定义端口\n"
+            "  nanoharness chat                       # 自动路由对话\n"
+            "  nanoharness chat --tier T2             # 强制 T2 档位\n"
+            "  nanoharness chat --skill researcher    # 用技能启动\n"
+            "  nanoharness skills                     # 列出所有技能\n"
+            "  nanoharness serve                      # 启动 API 服务器\n"
+            "  nanoharness serve --port 9000          # 自定义端口\n"
         ),
     )
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
@@ -251,6 +320,13 @@ def main() -> None:
         "--system", default=None, metavar="PROMPT",
         help="自定义系统提示词",
     )
+    chat_p.add_argument(
+        "--skill", default=None, metavar="NAME",
+        help="启动时激活指定技能（过滤工具 + 注入提示词补丁）",
+    )
+
+    # skills 子命令
+    sub.add_parser("skills", help="列出所有可用技能（内置 + 用户自定义）")
 
     # serve 子命令
     serve_p = sub.add_parser("serve", help="启动 OpenAI 兼容 HTTP API 服务器")
@@ -261,6 +337,8 @@ def main() -> None:
 
     if args.command == "chat":
         asyncio.run(_run_chat(args))
+    elif args.command == "skills":
+        _run_skills(args)
     elif args.command == "serve":
         _run_serve(args)
     else:

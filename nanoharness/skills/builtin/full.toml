@@ -1,0 +1,6 @@
+name = "full"
+description = "全工具模式：计算器 + 时间 + 网络搜索（默认行为）"
+tools = []
+tier = "T1"
+capabilities = ["general", "math", "search", "datetime"]
+system_prompt_patch = ""

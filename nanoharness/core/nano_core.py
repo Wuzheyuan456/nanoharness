@@ -86,6 +86,24 @@ class NanoCore:
         self._max_calls_per_tool = max_calls_per_tool
         self._stuck = StuckDetector(stuck_threshold)
 
+    # ── 公共属性 / Public properties ─────────────────────────────────────────
+
+    @property
+    def ctx(self) -> AgentContext:
+        return self._ctx
+
+    def swap_tools(
+        self,
+        tools: dict[str, Any],
+        tool_definitions: list[dict[str, Any]],
+    ) -> None:
+        """
+        热换工具集（下一个 run_turn 生效）/ Hot-swap the tool set (effective on next run_turn call).
+        asyncio 单线程，turn 间调用无竞态 / asyncio single-thread; safe to call between turns.
+        """
+        self._tools = tools
+        self._tool_defs = tool_definitions
+
     # ── 公共入口 / Public entry point ────────────────────────────────────────
 
     async def run_turn(self, user_message: str) -> AsyncIterator[AgentEvent]:

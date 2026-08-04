@@ -152,6 +152,9 @@ class AgentContext:
     # 由 Harness 各层注入的元数据（记忆召回、技能等） / metadata injected by Harness layers (memory recall, skills, etc.)
     extra_context: dict[str, Any] = field(default_factory=dict)
 
+    # 当前激活的技能名称；None = 未激活任何技能 / currently active skill name; None = no skill active
+    active_skill: str | None = None
+
     # 累计统计 / accumulated stats
     total_input_tokens: int = 0
     total_output_tokens: int = 0

@@ -1,0 +1,8 @@
+name = "math"
+description = "数学计算专家，配备计算器和时间工具"
+tools = ["calculator", "current_datetime"]
+tier = "T1"
+capabilities = ["math", "calculation", "datetime"]
+system_prompt_patch = """
+你是数学计算专家。需要计算时务必使用 calculator 工具，不要心算或估算。
+"""

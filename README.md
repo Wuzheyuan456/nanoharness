@@ -55,6 +55,8 @@ export ANTHROPIC_API_KEY=sk-ant-...
 nanoharness chat                        # 自动路由 T0~T3，内置三个工具
 nanoharness chat --tier T2              # 强制 T2 档位
 nanoharness chat --no-tools             # 纯对话模式
+nanoharness chat --skill researcher     # 激活 researcher 技能（过滤工具 + 注入提示词）
+nanoharness skills                      # 列出所有可用技能
 
 # ② OpenAI 兼容 HTTP API 服务器
 nanoharness serve --port 8080           # 浏览器开 http://localhost:8080/docs
@@ -68,7 +70,7 @@ nanoharness serve --port 8080           # 浏览器开 http://localhost:8080/doc
 python scripts/benchmark_router.py          # LLM Router 成本节省%
 python scripts/benchmark_compaction.py      # 上下文压缩降本%
 
-# ④ 跑测试（183 个，含行为指纹测试）
+# ④ 跑测试（201 个，含行为指纹测试）
 python -m pytest -v
 
 # ⑤ Gateway 压测
@@ -101,6 +103,9 @@ python -m nanoharness.observability.dashboard
 
 ### 10+1. Orchestrator 两项增强
 **任务依赖图**：`SubtaskSpec.depends_on` 声明任务间依赖，`_execute_with_deps()` 用 `asyncio.Event` 实现拓扑调度——无依赖的子任务并行，有依赖的等依赖完成后启动，DFS 环路检测兜底防死锁。**Worker 负载感知路由**：多候选 AgentCard 时按 `_active_counts`（当前活跃 Worker 数）选最空闲的，进入 `_run_worker` 时 +1、`finally` -1，asyncio 单线程保证无竞态。
+
+### 10+2. Skill 系统 — Claude Code 风格渐进式工具加载
+`nanoharness/skills/` 模块实现三项能力：**① YAML/TOML 技能定义**：每个技能是一份 `skills/builtin/*.toml`，声明 `tools`（过滤工具集）+ `system_prompt_patch`（前置提示词补丁）+ `capabilities`（Orchestrator 路由标签）；内置四个技能：`base`（无工具）/ `math` / `researcher` / `full`。**② 懒加载 SkillRegistry**：扫描 builtin → `~/.nanoharness/skills/` → `./skills/`（后覆盖前），惰性初始化，`reload()` 一行使缓存失效。**③ 运行时热换**：`/skill researcher` 内联命令在对话中切换技能，`SkillLoader.apply(nano, skill, …)` 更新 `nano._tools`/`_tool_defs`（asyncio 单线程无竞态，turn 间调用安全）；`nanoharness chat --skill researcher` 启动时激活，`nanoharness skills` 列出所有技能。
 
 ### 6. 行为指纹测试框架
 `BehaviorFingerprint` 区分 `tools_called`（LLM 请求）和 `tools_executed`（成功执行）。安全断言检查 `must_not_execute_tools ∩ tools_executed = ∅`——攻击者骗 LLM 请求危险工具，执行层拦截。
