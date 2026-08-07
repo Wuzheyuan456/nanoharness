@@ -5,6 +5,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+def _parse_md_frontmatter(text: str) -> dict:
+    """解析 --- 块内的简单 key: value 行（无需 PyYAML）/ Parse simple key: value lines inside --- block (no PyYAML needed)."""
+    result: dict = {}
+    for line in text.splitlines():
+        if ":" not in line:
+            continue
+        key, _, val = line.partition(":")
+        key = key.strip()
+        val = val.strip()
+        if not key:
+            continue
+        # 列表格式：[a, b, c] / list format: [a, b, c]
+        if val.startswith("[") and val.endswith("]"):
+            inner = val[1:-1]
+            result[key] = [v.strip().strip("\"'") for v in inner.split(",") if v.strip()]
+        elif val:
+            result[key] = val.strip("\"'")
+    return result
+
+
 @dataclass
 class SkillDef:
     """
@@ -35,6 +55,61 @@ class SkillDef:
             tools=data.get("tools", []),
             tier=data.get("tier", "T1"),
             capabilities=data.get("capabilities", []),
+            source_path=path,
+        )
+
+    @classmethod
+    def from_markdown(cls, path: Path) -> "SkillDef":
+        """
+        从 Markdown 文件解析技能定义 / Parse a skill definition from a Markdown file.
+
+        支持两种格式 / Supports two formats:
+
+        格式一（带 YAML frontmatter）/ Format 1 (with YAML frontmatter):
+            ---
+            name: researcher
+            description: Web research agent
+            tools: [web_search, current_datetime]
+            tier: T2
+            capabilities: [search]
+            ---
+            You are a thorough researcher...
+
+        格式二（纯 Markdown）/ Format 2 (plain Markdown):
+            # researcher
+            Web research agent.
+            You are a thorough researcher...
+        """
+        text = path.read_text(encoding="utf-8")
+        meta: dict = {}
+        body = text
+
+        # 解析 frontmatter 块 / Parse frontmatter block
+        if text.startswith("---\n"):
+            end = text.find("\n---\n", 4)
+            if end != -1:
+                meta = _parse_md_frontmatter(text[4:end])
+                body = text[end + 5:]   # 跳过 \n---\n / skip \n---\n
+
+        # name: frontmatter > 文件名 / frontmatter > file stem
+        name = str(meta["name"]) if "name" in meta else path.stem
+
+        # description: frontmatter > body 里第一个非空非标题行 / frontmatter > first non-empty non-heading line in body
+        description = str(meta["description"]) if "description" in meta else ""
+        if not description:
+            for line in body.splitlines():
+                stripped = line.strip().lstrip("#").strip()
+                if stripped:
+                    description = stripped
+                    break
+
+        return cls(
+            name=name,
+            description=description,
+            system_prompt_patch=body.strip(),
+            tools=meta.get("tools", []),
+            tier=str(meta.get("tier", "T1")),
+            capabilities=meta.get("capabilities", []),
             source_path=path,
         )
 

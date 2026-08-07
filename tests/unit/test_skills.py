@@ -116,6 +116,78 @@ def test_skill_registry_extra_dir_overrides(tmp_path: Path):
     assert sk.tier == "T2"
 
 
+# ─── SkillDef.from_markdown ───────────────────────────────────────────────────
+
+def test_skill_def_from_markdown_no_frontmatter(tmp_path: Path):
+    """纯 Markdown 无 frontmatter：name=文件名, description=首行, body=system_prompt_patch / plain MD: name=stem, desc=first line, body=patch."""
+    md = tmp_path / "coding.md"
+    md.write_text("# coding\nWrite clean code.\n\nYou are a senior engineer.")
+    skill = SkillDef.from_markdown(md)
+    assert skill.name == "coding"
+    assert skill.description == "coding"          # 首非空行（去掉 # 后）/ first non-empty line after stripping #
+    assert "You are a senior engineer" in skill.system_prompt_patch
+    assert skill.tools == []
+    assert skill.tier == "T1"
+    assert skill.source_path == md
+
+
+def test_skill_def_from_markdown_with_frontmatter(tmp_path: Path):
+    """带 frontmatter 时元字段优先于正文 / frontmatter fields take precedence over body."""
+    md = tmp_path / "researcher.md"
+    md.write_text(
+        "---\n"
+        "name: researcher\n"
+        "description: Web research agent\n"
+        "tools: [web_search, current_datetime]\n"
+        "tier: T2\n"
+        "capabilities: [search, browse]\n"
+        "---\n"
+        "You are a thorough researcher.\n"
+    )
+    skill = SkillDef.from_markdown(md)
+    assert skill.name == "researcher"
+    assert skill.description == "Web research agent"
+    assert skill.tools == ["web_search", "current_datetime"]
+    assert skill.tier == "T2"
+    assert skill.capabilities == ["search", "browse"]
+    assert "thorough researcher" in skill.system_prompt_patch
+
+
+def test_skill_def_from_markdown_frontmatter_none_sentinel(tmp_path: Path):
+    """frontmatter tools: [_none] 解析为哨兵值 / frontmatter tools: [_none] parses as sentinel."""
+    md = tmp_path / "base.md"
+    md.write_text("---\nname: base\ntools: [_none]\n---\nNo tools.")
+    skill = SkillDef.from_markdown(md)
+    assert skill.tools == ["_none"]
+    assert skill.tool_summary() == "（无）"
+
+
+def test_skill_registry_loads_markdown(tmp_path: Path):
+    """registry 能从 extra_dirs 加载 .md 技能 / registry loads .md skills from extra_dirs."""
+    (tmp_path / "coding.md").write_text(
+        "---\nname: coding\ndescription: Coding assistant\ntools: []\n---\nYou are an engineer."
+    )
+    reg = SkillRegistry(extra_dirs=[tmp_path])
+    sk = reg.lookup("coding")
+    assert sk is not None
+    assert sk.description == "Coding assistant"
+    assert sk.tool_summary() == "全部"
+
+
+def test_skill_registry_toml_overrides_md_same_name(tmp_path: Path):
+    """同名时 .toml 覆盖 .md（TOML 是结构化声明，优先级更高）/ .toml overrides .md with the same name."""
+    (tmp_path / "math.md").write_text(
+        "---\nname: math\ndescription: md version\ntools: []\n---\nMarkdown body."
+    )
+    (tmp_path / "math.toml").write_text(
+        'name = "math"\ndescription = "toml version"\ntools = ["calculator"]\ntier = "T1"\ncapabilities = []\n'
+    )
+    reg = SkillRegistry(extra_dirs=[tmp_path])
+    sk = reg.lookup("math")
+    assert sk is not None
+    assert sk.description == "toml version"
+
+
 # ─── SkillLoader ──────────────────────────────────────────────────────────────
 
 _ALL_TOOLS = {"calculator": lambda x: x, "web_search": lambda x: x, "current_datetime": lambda x: x}

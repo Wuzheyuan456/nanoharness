@@ -44,6 +44,14 @@ class SkillRegistry:
         for d in self._dirs:
             if not d.exists():
                 continue
+            # .md 先扫，.toml 后扫：同名时 TOML 覆盖 Markdown（TOML 是显式结构化声明）
+            # Scan .md first, then .toml: same-name TOML overrides Markdown (TOML is explicit structured)
+            for path in sorted(d.glob("*.md")):
+                try:
+                    skill = SkillDef.from_markdown(path)
+                    cache[skill.name] = skill
+                except Exception as exc:
+                    log.warning("Failed to load skill from %s: %s", path, exc)
             for path in sorted(d.glob("*.toml")):
                 try:
                     skill = SkillDef.from_toml(path)

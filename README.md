@@ -1,186 +1,271 @@
 # NanoHarness
 
-> 自研轻量级多智能体编排引擎与可观测网关。**不依赖任何 Agent 框架**（LangChain / LangGraph / AutoGen），从零手写 ReAct 运行时，并在其上架设智能模型路由、多 Agent 编排与多通道消息网关。
+> **Lightweight multi-agent orchestration engine — built from scratch, zero framework dependencies.**
+> 轻量级多智能体编排引擎，不依赖任何 Agent 框架，从零手写 ReAct 运行时。
 
-核心卖点：每一行代码都能在面试中解释清楚——因为都是自己写的。
+![Python](https://img.shields.io/badge/python-3.12-blue?logo=python&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-206_passing-brightgreen?logo=pytest&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-yellow)
+
+NanoHarness implements a complete agent harness stack — hand-written ReAct state machine, LLM difficulty router, three-tier memory, multi-agent orchestration, multi-channel gateway, and observability — without depending on LangChain, LangGraph, or any agent framework. Every component is purpose-built and fully transparent.
+
+NanoHarness 实现了完整的 Agent 基础设施栈——手写 ReAct 状态机、LLM 难度路由、三层记忆、多 Agent 编排、多通道网关与可观测性，不依赖 LangChain / LangGraph / AutoGen 等任何框架。
 
 ---
 
-## 架构总览
+## Architecture 架构
 
 ```
 NanoHarness
 │
-├── L1  核心引擎层   core/             — 手写 ReAct 状态机、语义贡献度压缩、工具熔断、事件溯源
-├── L1.5 编排层      engine/           — TurnRunner 分阶段流水线 + Hooks 质量门控
-├── L2  服务层
-│        router/                      — LLM-based 难度路由（T0~T3），成本可降级
-│        memory/                      — 三层记忆：L1 内存 / L2 SQLite sessions / L3 FTS5 全文索引
-│        agents/                      — AgentCard 注册（对齐 A2A）、Supervisor、辩论模式
-│        provider/                    — LLM 抽象（Anthropic / OpenAI）
-│        channels/                    — 多通道网关：信封抽象 + 车道隔离 + Telegram/Discord
-│        tools/                       — 内置工具：calculator / current_datetime / web_search
-└── L3  接入层
-         observability/               — OTel 轻量追踪 + 四大黄金信号 + Gradio 面板
-         cli.py                       — 交互式对话 CLI（nanoharness chat）
-         server.py                    — OpenAI 兼容 HTTP API（/v1/chat/completions）
-         scripts/                     — benchmark 量化数据 + Gateway 压测
+├── L1   Core Engine     core/           ReAct async-generator state machine
+│                                        Semantic compaction · Event sourcing · Tool contracts
+├── L1.5 Engine Layer    engine/         TurnRunner pipeline · Quality-gate hooks · Memory bridge
+├── L2   Services
+│         router/                        LLM difficulty routing (T0–T3) · Confidence gate · Anti-downgrade
+│         memory/                        L1 in-process · L2 SQLite sessions · L3 FTS5 full-text index
+│         agents/                        AgentCard registry · Supervisor · Debate mode · DAG scheduling
+│         provider/                      LLM abstraction (Anthropic / OpenAI) · Retry · Failover
+│         channels/                      Envelope abstraction · Lane isolation · Telegram / Discord
+│         tools/                         Built-in tools: calculator · current_datetime · web_search
+│         skills/                        TOML + Markdown skill definitions · Hot-swap · 3-tier priority
+└── L3   Access
+          observability/                 OTel tracing bridge · Golden signals · Gradio dashboard
+          nano/                          Personal assistant · Persona · ~/.nano/ config · one-shot mode
+          cli.py                         nanoharness developer CLI
+          server.py                      OpenAI-compatible HTTP API  (/v1/chat/completions)
+          scripts/                       Benchmarks · Load tests
 ```
 
 ---
 
-## 七个 Phase
+## Highlights 核心亮点
 
-| Phase | 模块                          | 状态  | 一句话                                                              |
-| ----- | --------------------------- | --- | ---------------------------------------------------------------- |
-| 1     | `core/`                     | ✅   | 手写 ReAct async generator，语义贡献度压缩，事件溯源                            |
-| 2     | `engine/` `router/`         | ✅   | TurnRunner 分阶段 + per-session 锁重入检测 + LLM 难度路由                    |
-| 3     | `memory/`                   | ✅   | 三层记忆 + FTS5 trigram 中文检索 + 时间衰减 + Dream 巩固                       |
-| 4     | `agents/`                   | ✅   | AgentCard/A2A + Supervisor 四步编排 + 辩论模式独立视角                       |
-| 5     | `tests/behavioral/`         | ✅   | 行为指纹测试框架：断言行为约束，不断言输出文本                                          |
-| 6     | `channels/`                 | ✅   | 多通道网关：信封抽象 + 车道隔离 + 声明式路由 + TG/Discord                           |
-| 7     | `observability/` `scripts/` | ✅   | OTel 追踪 + 四大黄金信号 + Gradio 面板 + benchmark/压测                      |
-| 8     | `core/`                     | ✅   | 执行流深度控制：StuckDetector + 两阶段收尾 + 工具契约 + 终止分类 + 动态禁用 + per-tool 预算 |
+### LLM Difficulty Routing — 90% accuracy, 20.6% cost savings
+### 智能难度路由
+
+Four model tiers (T0–T3) selected by a single cheap classifier call. The routing pipeline chains two policy stages: **confidence gate** (auto-upgrade on low confidence) + **anti-downgrade** (30-min session cache prevents quality regression). A three-level fallback chain (LLM → keyword heuristic → default tier) ensures the classifier's own failure never blocks a request.
+
+四档模型分级（T0–T3），由一次廉价分类 LLM 调用选档。路由策略串联两阶段：低置信度自动升档 + 30 分钟缓存防降档。三级降级链保证分类器超时不影响主流程。
+
+```
+Benchmark (benchmark_router.py · 40-sample test set)
+  Accuracy          90.0%   (keyword-rule baseline: 65%)
+  Cost savings      20.6%   (vs. single top-tier model)
+  Penalty factor     3      (lower is better; baseline: 13)
+```
 
 ---
 
-## 快速启动
+### Semantic Context Compaction — turn-boundary safe, CJK-aware
+### 语义贡献度压缩
+
+Messages are scored by contribution weight (tool results **0.8** > user messages **0.6** > assistant text **0.4**) with position decay, then trimmed from least valuable first. A `retreat_to_turn_boundary` step ensures the cut never lands inside a `tool_use` / `tool_result` pair — splitting pairs causes API errors. Token estimation is CJK-aware (Chinese averages ~2 chars/token vs. ~4 for ASCII).
+
+按语义贡献度评分后裁剪低价值内容，turn-boundary 保护不切断工具配对，token 估算对中文进行特殊处理（~2 字符/token）。
+
+---
+
+### Execution Flow Control — intervention before hard stop
+### 执行流控制：干预优先于硬停
+
+Beyond `max_iter` / `max_tool_calls`, NanoHarness adds two orthogonal stuck-detection layers:
+
+- **Call fingerprint** (`tool_name + args_hash`, counted across the whole turn): catches exact repetition and A→B→A→B oscillation.
+- **Per-tool budget** (`max_calls_per_tool`): catches same-tool retries with varying arguments that fingerprinting misses.
+
+On trigger, the engine **does not raise** — it injects a recovery hint, hides the offending tool from `tool_definitions`, and lets the model attempt a graceful finish. Only on a second budget hit does it strip all tools for one final answer attempt; hard-stop is the last resort.
+
+Termination cause is reported in `DoneEvent.stop_reason` (6 variants) + `outcome` (3 classes) — observable and testable, not buried in `final_text`.
+
+在 max_iter / max_tool_calls 之外，额外两道卡死检测：调用指纹（抓重复与振荡）+ per-tool 调用预算（抓换参数钻空子）。触发时不直接停止，而是注入恢复指令、动态禁用该工具，给模型一次换方法收尾的机会。两阶段优雅收尾后才硬停。
+
+---
+
+### Behavioral Fingerprint Tests
+### 行为指纹测试框架
+
+Test suites assert *behavioral paths*, not output text — LLM output is non-deterministic and text assertions break on model updates.
+
+`BehaviorFingerprint` distinguishes:
+- `tools_called` — tools the LLM *requested* (from `ToolCallStart` events)
+- `tools_executed` — tools that *actually ran* (from `ToolCallResult` events)
+
+Security assertions take the form `must_not_execute_tools ∩ tools_executed = ∅`. Even if a prompt-injection tricks the LLM into requesting a dangerous tool, the execution layer can block it — and the test verifies that boundary holds.
+
+测试断言行为路径而非输出文字。区分"LLM 请求的工具"与"执行层实际运行的工具"，安全断言验证执行层拦截能力，而非 LLM 输出。
+
+---
+
+### Skill System — TOML + Markdown, hot-swap at runtime
+### 技能系统
+
+Skills are plain files (`*.toml` or `*.md`) declaring a tool whitelist, a system-prompt patch, and capability tags for orchestrator routing. Three-tier priority loading: `builtin/ → ~/.nanoharness/skills/ → ./skills/` (later overrides earlier). TOML takes precedence over Markdown on name collision.
+
+Runtime hot-swap: `/skill researcher` switches the active skill mid-conversation; the next turn picks up the new tool set and prompt patch immediately. No restart required.
+
+技能文件（TOML 或 Markdown）声明工具白名单、提示词补丁与能力标签。三层优先级加载，运行时 `/skill NAME` 热换，下一个 turn 立即生效。
+
+---
+
+### Multi-Agent Orchestration — true isolation, DAG scheduling
+### 多 Agent 编排
+
+Supervisor mode: decompose task → route by capability tags → `asyncio.gather` parallel execution → synthesize. Debate mode: two Reviewers run with entirely separate `session_key + AgentContext` — they cannot see each other's history. Judge identifies disagreement rather than averaging.
+
+Task dependency DAG (`SubtaskSpec.depends_on`): tasks with no dependencies run in parallel; tasks with dependencies wait on `asyncio.Event`. DFS cycle detection prevents deadlock.
+
+`ContextVar _ORCHESTRATION_DEPTH` prevents infinite recursion when an agent tool calls back into the orchestrator.
+
+Supervisor 模式：拆解→路由→并行→综合。辩论模式：两个 Reviewer 物理隔离 session，无法看到彼此历史。任务依赖 DAG 实现拓扑调度，ContextVar 防嵌套递归。
+
+---
+
+## Nano — Personal Assistant 个人助手
+
+Nano is a personal AI assistant built on top of NanoHarness. It uses the full engine stack (routing, tools, skills, memory) and comes ready to use out of the box.
+
+Nano 是构建在 NanoHarness 之上的个人 AI 助手，开箱即用。
 
 ```bash
-# 环境（conda）
-conda activate nanoharness        # Python 3.12
+pip install -e .
 export ANTHROPIC_API_KEY=sk-ant-...
 
-# ① 交互式对话（一行启动 ReAct 智能体）
-nanoharness chat                        # 自动路由 T0~T3，内置三个工具
-nanoharness chat --tier T2              # 强制 T2 档位
-nanoharness chat --no-tools             # 纯对话模式
-nanoharness chat --skill researcher     # 激活 researcher 技能（过滤工具 + 注入提示词）
-nanoharness skills                      # 列出所有可用技能
+nano init                       # create ~/.nano/config.toml and ~/.nano/skills/
+nano                            # start interactive chat
+nano -p "what time is it"       # one-shot query, prints response and exits
+nano --skill researcher         # start with researcher skill active
+nano skills                     # list available skills
+```
 
-# ② OpenAI 兼容 HTTP API 服务器
-nanoharness serve --port 8080           # 浏览器开 http://localhost:8080/docs
+**Customise** — edit `~/.nano/config.toml`:
 
-# 接入示例（Python）：
+```toml
+[assistant]
+name = "Nano"
+# system_prompt = "You are a ..."   # override persona
+
+[routing]
+tier = "auto"   # or T0 / T1 / T2 / T3
+
+[defaults]
+# skill = "researcher"   # activate a skill on every startup
+```
+
+**Personal skills** — drop a `.toml` or `.md` file in `~/.nano/skills/`:
+
+```markdown
+---
+name: my-analyst
+description: Data analysis specialist
+tools: [calculator, web_search]
+---
+You are a rigorous data analyst. Show your work step by step.
+```
+
+---
+
+## Quick Start 快速开始
+
+```bash
+# Install / 安装
+pip install -e .
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Interactive chat / 交互式对话
+nanoharness chat                      # auto-routing T0–T3, built-in tools
+nanoharness chat --tier T2            # force a specific tier
+nanoharness chat --no-tools           # pure conversation mode
+nanoharness chat --skill researcher   # activate a skill (tool filter + prompt patch)
+nanoharness skills                    # list available skills
+
+# OpenAI-compatible API server / OpenAI 兼容服务
+nanoharness serve --port 8080         # http://localhost:8080/docs
+
+# Connect any OpenAI client / 接入示例
 # from openai import OpenAI
 # client = OpenAI(base_url="http://localhost:8080/v1", api_key="any")
-# resp = client.chat.completions.create(model="nanoharness", messages=[...])
+# client.chat.completions.create(model="nanoharness", messages=[...])
 
-# ③ 量化数据 benchmark（--mock 验证流程，不需要 API key）
-python scripts/benchmark_router.py          # LLM Router 成本节省%
-python scripts/benchmark_compaction.py      # 上下文压缩降本%
+# Benchmarks (--mock mode, no API key needed) / 量化 benchmark
+python scripts/benchmark_router.py          # routing accuracy + cost savings
+python scripts/benchmark_compaction.py      # compaction token reduction
 
-# ④ 跑测试（201 个，含行为指纹测试）
-python -m pytest -v
+# Tests / 测试
+python -m pytest -v                         # 206 tests
 
-# ⑤ Gateway 压测
+# Load test / 压测
 python scripts/load_test_gateway.py --concurrency 50 --rounds 3
 
-# ⑥ 可视化面板（浏览器访问 http://localhost:7860）
+# Observability dashboard / 可观测面板  (http://localhost:7860)
 python -m nanoharness.observability.dashboard
 ```
 
----
+**Writing a custom skill** — drop a file in `./skills/`:
 
-## 核心设计决策（面试弹药）
-
-### 1. NanoCore 是 async generator，不是普通 coroutine
-`run_turn()` 用 `async for event in core.run_turn(msg)` 消费。流式输出、事件溯源、外部观察者模式全靠这一层。
-
-### 2. 语义贡献度压缩，不是朴素截断
-每条 message 打分（工具结果 0.8 > 用户消息 0.6 > 助手文本 0.4，叠加位置衰减），turn-boundary 保护不切断 tool_use/tool_result 配对。
-
-### 3. LLM-based 难度路由，不用本地 ONNX
-一次 Haiku call 分类 T0~T3，超时降级到规则启发式，再降级到 fallback。相对全用 T1，成本节省 Y%（见 benchmark）。
-
-### 4. ContextVar 一套原语复用三次
-- TurnRunner `_LOCK_OWNER`：per-session turn 串行 + 重入检测
-- Orchestrator `_ORCHESTRATION_DEPTH`：嵌套深度防无限递归
-- LaneQueue `_LANE_OWNER`：车道锁重入检测
-
-### 5. 辩论模式真独立视角
-两个 Reviewer 用完全独立的 session_key + AgentContext，asyncio.gather 并行——物理上不可能看到对方历史。Judge 识别分歧不取平均。
-
-### 10+1. Orchestrator 两项增强
-**任务依赖图**：`SubtaskSpec.depends_on` 声明任务间依赖，`_execute_with_deps()` 用 `asyncio.Event` 实现拓扑调度——无依赖的子任务并行，有依赖的等依赖完成后启动，DFS 环路检测兜底防死锁。**Worker 负载感知路由**：多候选 AgentCard 时按 `_active_counts`（当前活跃 Worker 数）选最空闲的，进入 `_run_worker` 时 +1、`finally` -1，asyncio 单线程保证无竞态。
-
-### 10+2. Skill 系统 — Claude Code 风格渐进式工具加载
-`nanoharness/skills/` 模块实现三项能力：**① YAML/TOML 技能定义**：每个技能是一份 `skills/builtin/*.toml`，声明 `tools`（过滤工具集）+ `system_prompt_patch`（前置提示词补丁）+ `capabilities`（Orchestrator 路由标签）；内置四个技能：`base`（无工具）/ `math` / `researcher` / `full`。**② 懒加载 SkillRegistry**：扫描 builtin → `~/.nanoharness/skills/` → `./skills/`（后覆盖前），惰性初始化，`reload()` 一行使缓存失效。**③ 运行时热换**：`/skill researcher` 内联命令在对话中切换技能，`SkillLoader.apply(nano, skill, …)` 更新 `nano._tools`/`_tool_defs`（asyncio 单线程无竞态，turn 间调用安全）；`nanoharness chat --skill researcher` 启动时激活，`nanoharness skills` 列出所有技能。
-
-### 6. 行为指纹测试框架
-`BehaviorFingerprint` 区分 `tools_called`（LLM 请求）和 `tools_executed`（成功执行）。安全断言检查 `must_not_execute_tools ∩ tools_executed = ∅`——攻击者骗 LLM 请求危险工具，执行层拦截。
-
-### 7. 信封抽象 + 车道隔离
-`InboundEnvelope` 统一 Telegram/Discord 差异，Gateway 只认信封。`LaneQueue` per-session 串行、跨 session 并行，群聊默认要求 @机器人。
-
-### 8. 四大黄金信号 + 零依赖 metrics
-自实现 Counter/Histogram/Gauge，`render_prometheus()` 输出标准 exposition format。延迟分桶算 P99 而非平均——平均会掩盖长尾。
-
-### 9. Provider 故障转移 — 把死代码 `retryable` 接通
-`ProviderSelector` 实现 `LLMProvider` Protocol，对 TurnRunner 完全透明。RATE_LIMITED/SERVER_ERROR/TIMEOUT 指数退避重试（+25% jitter 防 thundering herd），耗尽切 fallback provider；AUTH_INVALID 和 CONTEXT_TOO_LONG 立即 re-raise（前者密钥无效，后者是压缩信号必须透传）。`retryable` 字段 Phase 1 就定义了，Phase 2 才接通——不超前设计。路由策略层（`router/policy.py`）在分类后串联两阶段：confidence gate（低置信度升档）+ anti-downgrade（30min KV cache 保护窗口防降档）。
-
-### 10. 执行流深度控制 — 干预优先于硬停
-不止 `max_iter`/`max_tool_calls` 两道硬熔断。卡死检测用 per-签名整轮计数（catch 重复 + A-B-A-B 振荡），触发时**不 raise**——跳过执行 + 注入恢复消息 + 动态禁用该工具，给 Agent 退路。撞预算走两阶段优雅收尾（注入"别调工具直接答"+剥离工具再做一次，二次才硬停），这是 opensquilla 的招牌机制、LangGraph 没有。终止原因走 `DoneEvent.stop_reason`（6 种）+ `outcome`（3 分类）可观测可测，不塞进 final_text。工具返回 `ToolResult(status, next_action_hint)` 契约，模糊返回是死循环根因。诚实取舍：没抄 opensquilla 的字节级请求去重（NanoCore 每轮 append history，连续相同请求不可能，是死代码），换成 per-tool 调用预算 catch 同工具不同参数的钻空子。详见 `phase8_面试总结.md`。
-
----
-
-## 量化数据
-
-| 指标 | 数据来源 | 实测结果 |
-|------|---------|---------|
-| 路由分类准确率 | `benchmark_router.py` | 90.0%（20 条测试集） |
-| 路由 cost 节省 | `benchmark_router.py` | 20.6%（相对全用 T2） |
-| 成本效率 | `benchmark_router.py` | 0.23（每 1% 准确率换 0.23% 成本节省） |
-| 误判惩罚 | `benchmark_router.py` | 3（越低越好） |
-| Gateway P99 延迟 | `load_test_gateway.py` | P99≈32ms（车道层，隔离 LLM 延迟） |
-
-> 详细优化过程见 [docs/路由优化记录.md](docs/路由优化记录.md)
-
----
-
-## 技术栈
-
-| 维度 | 选型 | 理由 |
-|------|------|------|
-| 运行时 | Python 3.12 / asyncio | IO 密集型，单进程足够 |
-| LLM 接口 | Anthropic SDK | Claude 流式 + extended thinking |
-| 存储 | SQLite + FTS5 trigram | 零依赖，中文全文检索 |
-| 通道 | aiogram 3.x / discord.py | 异步原生 IM 适配 |
-| 可观测 | 自实现 + 可桥接 OTel | 轻量可解释，不引重 SDK |
-| 面板 | Gradio | 几十行省前端工时 |
-| 测试 | pytest + pytest-asyncio | 行为指纹自研范式 |
-
----
-
-## 层间依赖规则
-
+```toml
+# skills/my_analyst.toml
+name = "analyst"
+description = "Data analysis assistant"
+tools = ["calculator", "web_search"]
+tier = "T2"
+system_prompt_patch = "You are a rigorous data analyst. Always show your work."
+capabilities = ["analysis"]
 ```
-core.*      ← 只依赖 provider.*，不 import engine/memory/channels/agents
-engine.*    ← 可 import core.*，不 import channels/memory/agents
-provider.*  ← 只依赖 core.context（Message 类型）
-router.*    ← 可 import provider.*，不 import channels
-memory.*    ← 可 import core.*，不 import channels/agents
-agents.*    ← 可 import core.* + engine.*
-channels.*  ← 可 import 所有层，是最外层
+
+Or Markdown with frontmatter (compatible with Claude Code / OpenHarness skill format):
+
+```markdown
+---
+name: analyst
+description: Data analysis assistant
+tools: [calculator, web_search]
+tier: T2
+---
+You are a rigorous data analyst. Always show your work.
 ```
 
 ---
 
-## 面试总结文档
+## Benchmarks 量化数据
 
-每个 Phase 配一份面试话术 MD（问题/坏方案/我的方案/代码锚点/快速问答卡）：
+| Metric | Source | Result |
+|--------|--------|--------|
+| Routing accuracy | `benchmark_router.py` · 40-sample set | **90.0%** (keyword-rule baseline: 65%) |
+| Cost savings | `benchmark_router.py` | **20.6%** vs. single top-tier model |
+| Penalty factor | `benchmark_router.py` | **3** (lower is better; baseline: 13) |
+| Gateway P99 latency | `load_test_gateway.py` · 50 concurrent | **≈32 ms** (lane layer, LLM latency excluded) |
 
-- `phase1_面试总结.md` — ReAct 状态机、压缩、事件溯源
-- `phase2_面试总结.md` — TurnRunner、路由、降级链
-- `phase3_面试总结.md` — 三层记忆、FTS5 trigram、Dream
-- `phase4_面试总结.md` — AgentCard、Supervisor、辩论模式
-- `phase5_面试总结.md` — 行为指纹、安全边界、约束规格
-- `phase6_面试总结.md` — 信封、车道隔离、安全门控
-- `phase7_面试总结.md` — OTel 追踪、四大黄金信号、benchmark/压测
-- `phase8_面试总结.md` — 执行流深度控制：卡死检测/两阶段收尾/工具契约/终止分类
+---
+
+## Tech Stack 技术栈
+
+| Layer | Choice | Reason |
+|-------|--------|--------|
+| Runtime | Python 3.12 / asyncio | IO-bound workloads; single-process sufficient |
+| LLM | Anthropic SDK | Streaming + extended thinking (T3) |
+| Storage | SQLite + FTS5 trigram | Zero extra infra; Chinese full-text search built-in |
+| Channels | aiogram 3.x / discord.py | Native async IM adapters |
+| Observability | Self-implemented + OTel bridge | Lightweight; no heavy SDK required |
+| Dashboard | Gradio | Minimal frontend code |
+| Tests | pytest + behavioral fingerprints | Behavior-path assertions, not text matching |
+
+---
+
+## Layer Dependency Rules 层间依赖
+
+```
+core.*      ←  provider.* only — no imports from engine / memory / channels / agents
+engine.*    ←  core.* — no imports from channels / memory / agents
+provider.*  ←  core.context (Message type) only
+router.*    ←  provider.* — no imports from channels
+memory.*    ←  core.* — no imports from channels / agents
+agents.*    ←  core.* + engine.*
+channels.*  ←  all layers (outermost)
+```
 
 ---
 
 ## GitHub
 
-仓库：https://github.com/Wuzheyuan456/nanoharness
+https://github.com/Wuzheyuan456/nanoharness
