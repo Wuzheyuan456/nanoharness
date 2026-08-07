@@ -49,6 +49,8 @@ async def _run(args: argparse.Namespace, one_shot: bool = False) -> None:
     from nanoharness.router.tiers import Tier, TierRegistry
     from nanoharness.skills import SkillLoader, SkillRegistry
     from nanoharness.tools import get_builtin_tools
+    from nanoharness.mcp.client import McpClient
+    from nanoharness.mcp.config import McpConfig
 
     from nanoharness.nano.config import NanoConfig, SKILLS_DIR
     from nanoharness.nano.persona import DEFAULT_SYSTEM_PROMPT
@@ -67,6 +69,19 @@ async def _run(args: argparse.Namespace, one_shot: bool = False) -> None:
     skill_registry = SkillRegistry(extra_dirs=extra_dirs)
 
     all_tools, all_tool_defs = get_builtin_tools()
+
+    # MCP tool loading — connect once, reuse across all turns
+    mcp_config = McpConfig.load_for_nano()
+    mcp_client = McpClient(mcp_config)
+    await mcp_client.__aenter__()
+    if mcp_client.tool_infos:
+        mcp_tools, mcp_defs = mcp_client.get_tools()
+        all_tools = {**all_tools, **mcp_tools}
+        all_tool_defs = all_tool_defs + mcp_defs
+        if not one_shot:
+            servers = ", ".join(mcp_client.connected_servers())
+            print(f"{_DIM}[MCP: {len(mcp_client.tool_infos)} tools from {servers}]{_R}")
+
     tools, tool_defs = all_tools, all_tool_defs
     current_system = base_system
     active_skill: str | None = None
@@ -172,49 +187,55 @@ async def _run(args: argparse.Namespace, one_shot: bool = False) -> None:
 
     # ── One-shot mode ──────────────────────────────────────────────────────────
     if one_shot:
-        await _run_turn(args.prompt)
+        try:
+            await _run_turn(args.prompt)
+        finally:
+            await mcp_client.__aexit__(None, None, None)
         return
 
     # ── Interactive loop ───────────────────────────────────────────────────────
-    while True:
-        try:
-            user_input = input(f"{_BOLD}You:{_R} ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print(f"\n{_DIM}Goodbye.{_R}")
-            break
+    try:
+        while True:
+            try:
+                user_input = input(f"{_BOLD}You:{_R} ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print(f"\n{_DIM}Goodbye.{_R}")
+                break
 
-        if not user_input:
-            continue
-        if user_input.lower() in ("bye", "exit", "quit", "再见", "q"):
-            print(f"{_DIM}Goodbye.{_R}")
-            break
+            if not user_input:
+                continue
+            if user_input.lower() in ("bye", "exit", "quit", "再见", "q"):
+                print(f"{_DIM}Goodbye.{_R}")
+                break
 
-        # /skills — list available skills
-        if user_input.strip() == "/skills":
-            all_skills = skill_registry.list_all()
-            print(f"\n{_BOLD}Available skills ({len(all_skills)}):{_R}")
-            for s in all_skills:
-                marker = "  ◀ active" if s.name == ctx.active_skill else ""
-                print(f"  {_CYAN}{s.name:<14}{_R}{s.description}  {_DIM}[{s.tool_summary()}]{_R}{marker}")
-            print()
-            continue
+            # /skills — list available skills
+            if user_input.strip() == "/skills":
+                all_skills = skill_registry.list_all()
+                print(f"\n{_BOLD}Available skills ({len(all_skills)}):{_R}")
+                for s in all_skills:
+                    marker = "  ◀ active" if s.name == ctx.active_skill else ""
+                    print(f"  {_CYAN}{s.name:<14}{_R}{s.description}  {_DIM}[{s.tool_summary()}]{_R}{marker}")
+                print()
+                continue
 
-        # /skill NAME — hot-swap skill
-        if user_input.startswith("/skill "):
-            sname = user_input[7:].strip()
-            sk = skill_registry.lookup(sname)
-            if sk is None:
-                print(f"{_RED}Skill '{sname}' not found.{_R}")
-            else:
-                tools, tool_defs = SkillLoader.filter_tools(sk, all_tools, all_tool_defs)
-                current_system = SkillLoader.patch_system(sk, base_system)
-                ctx.system_prompt = current_system
-                ctx.active_skill = sk.name
-                active_skill = sk.name
-                print(f"{_CYAN}[{sk.name}] activated — tools: {sk.tool_summary()}{_R}")
-            continue
+            # /skill NAME — hot-swap skill
+            if user_input.startswith("/skill "):
+                sname = user_input[7:].strip()
+                sk = skill_registry.lookup(sname)
+                if sk is None:
+                    print(f"{_RED}Skill '{sname}' not found.{_R}")
+                else:
+                    tools, tool_defs = SkillLoader.filter_tools(sk, all_tools, all_tool_defs)
+                    current_system = SkillLoader.patch_system(sk, base_system)
+                    ctx.system_prompt = current_system
+                    ctx.active_skill = sk.name
+                    active_skill = sk.name
+                    print(f"{_CYAN}[{sk.name}] activated — tools: {sk.tool_summary()}{_R}")
+                continue
 
-        await _run_turn(user_input)
+            await _run_turn(user_input)
+    finally:
+        await mcp_client.__aexit__(None, None, None)
 
 
 def _cmd_init(_args: argparse.Namespace) -> None:
@@ -232,8 +253,14 @@ def _cmd_init(_args: argparse.Namespace) -> None:
         print(f"{_GREEN}✓{_R} Created {_BOLD}~/.nano/config.toml{_R}")
         print(f"{_GREEN}✓{_R} Created {_BOLD}~/.nano/skills/{_R}  (drop .toml or .md skill files here)")
 
+    mcp_path = NANO_DIR / "mcp.json"
+    if not mcp_path.exists():
+        mcp_path.write_text('{"mcpServers": {}}\n', encoding="utf-8")
+        print(f"{_GREEN}✓{_R} Created {_BOLD}~/.nano/mcp.json{_R}  (add MCP server entries to enable MCP tools)")
+
     print(f"\n  Next: set your API key and run {_BOLD}nano{_R}")
     print(f"  {_DIM}export ANTHROPIC_API_KEY=sk-ant-...{_R}")
+    print(f"  {_DIM}pip install 'nanoharness[mcp]'  # optional: enable MCP servers{_R}")
 
 
 def _cmd_skills(_args: argparse.Namespace) -> None:

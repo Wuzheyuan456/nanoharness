@@ -4,7 +4,7 @@
 > 轻量级多智能体编排引擎，不依赖任何 Agent 框架，从零手写 ReAct 运行时。
 
 ![Python](https://img.shields.io/badge/python-3.12-blue?logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-206_passing-brightgreen?logo=pytest&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-225_passing-brightgreen?logo=pytest&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-yellow)
 
 NanoHarness implements a complete agent harness stack — hand-written ReAct state machine, LLM difficulty router, three-tier memory, multi-agent orchestration, multi-channel gateway, and observability — without depending on LangChain, LangGraph, or any agent framework. Every component is purpose-built and fully transparent.
@@ -29,6 +29,7 @@ NanoHarness
 │         channels/                      Envelope abstraction · Lane isolation · Telegram / Discord
 │         tools/                         Built-in tools: calculator · current_datetime · web_search
 │         skills/                        TOML + Markdown skill definitions · Hot-swap · 3-tier priority
+│         mcp/                           MCP client · stdio + SSE transport · tool namespace
 └── L3   Access
           observability/                 OTel tracing bridge · Golden signals · Gradio dashboard
           nano/                          Personal assistant · Persona · ~/.nano/ config · one-shot mode
@@ -163,6 +164,31 @@ tools: [calculator, web_search]
 You are a rigorous data analyst. Show your work step by step.
 ```
 
+**MCP tools** — create `~/.nano/mcp.json` to connect any [Model Context Protocol](https://modelcontextprotocol.io) server:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/docs"]
+    },
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"]
+    },
+    "my-api": {
+      "type": "sse",
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+MCP tools are discovered at startup and appear alongside builtins. Tool names are namespaced as `{server}__{tool_name}`. Install MCP support with `pip install 'nanoharness[mcp]'`.
+
+MCP 工具在启动时自动发现，与内置工具并列提供。工具名格式：`{server名}__{工具名}`。
+
 ---
 
 ## Quick Start 快速开始
@@ -192,7 +218,7 @@ python scripts/benchmark_router.py          # routing accuracy + cost savings
 python scripts/benchmark_compaction.py      # compaction token reduction
 
 # Tests / 测试
-python -m pytest -v                         # 206 tests
+python -m pytest -v                         # 225 tests
 
 # Load test / 压测
 python scripts/load_test_gateway.py --concurrency 50 --rounds 3
