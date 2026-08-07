@@ -109,6 +109,27 @@ Runtime hot-swap: `/skill researcher` switches the active skill mid-conversation
 
 ---
 
+### MCP Client — connect any external tool server, zero-restart discovery
+### MCP 客户端集成
+
+Drop `~/.nano/mcp.json` to connect any [Model Context Protocol](https://modelcontextprotocol.io) server (filesystem, databases, APIs). Nano discovers tools at startup — no restart needed when you add a new server.
+
+```json
+{
+  "mcpServers": {
+    "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/docs"] },
+    "fetch":      { "command": "uvx", "args": ["mcp-server-fetch"] },
+    "my-api":     { "type": "sse",  "url": "http://localhost:8000/mcp" }
+  }
+}
+```
+
+`AsyncExitStack` manages N server connections as one lifecycle — all connections close cleanly on session exit regardless of how many servers are configured. Per-server failure isolation: an unreachable server is logged and skipped; the others start normally. Tool names are namespaced `{server}__{tool}` to prevent collisions across servers. Graceful degradation: if the `mcp` package is absent, Nano starts with a one-line warning — no crash, no blocked startup.
+
+`AsyncExitStack` 管理 N 个 server 连接为单一生命周期。一个 server 连接失败不影响其他。工具名格式 `{server}__{tool}` 防命名碰撞。mcp 包未安装时一行警告后正常启动。
+
+---
+
 ### Multi-Agent Orchestration — true isolation, DAG scheduling
 ### 多 Agent 编排
 
