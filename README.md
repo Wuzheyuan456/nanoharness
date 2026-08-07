@@ -4,7 +4,7 @@
 > 轻量级多智能体编排引擎，不依赖任何 Agent 框架，从零手写 ReAct 运行时。
 
 ![Python](https://img.shields.io/badge/python-3.12-blue?logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-225_passing-brightgreen?logo=pytest&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-253_passing-brightgreen?logo=pytest&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-yellow)
 
 NanoHarness implements a complete agent harness stack — hand-written ReAct state machine, LLM difficulty router, three-tier memory, multi-agent orchestration, multi-channel gateway, and observability — without depending on LangChain, LangGraph, or any agent framework. Every component is purpose-built and fully transparent.
@@ -26,7 +26,7 @@ NanoHarness
 │         memory/                        L1 in-process · L2 SQLite sessions · L3 FTS5 full-text index
 │         agents/                        AgentCard registry · Supervisor · Debate mode · DAG scheduling
 │         provider/                      LLM abstraction (Anthropic / OpenAI) · Retry · Failover
-│         channels/                      Envelope abstraction · Lane isolation · Telegram / Discord
+│         channels/                      Envelope abstraction · Lane isolation · Telegram / Discord / Feishu
 │         tools/                         Built-in tools: calculator · current_datetime · web_search
 │         skills/                        TOML + Markdown skill definitions · Hot-swap · 3-tier priority
 │         mcp/                           MCP client · stdio + SSE transport · tool namespace
@@ -239,7 +239,7 @@ python scripts/benchmark_router.py          # routing accuracy + cost savings
 python scripts/benchmark_compaction.py      # compaction token reduction
 
 # Tests / 测试
-python -m pytest -v                         # 225 tests
+python -m pytest -v                         # 253 tests
 
 # Load test / 压测
 python scripts/load_test_gateway.py --concurrency 50 --rounds 3
@@ -292,7 +292,7 @@ You are a rigorous data analyst. Always show your work.
 | Runtime | Python 3.12 / asyncio | IO-bound workloads; single-process sufficient |
 | LLM | Anthropic SDK | Streaming + extended thinking (T3) |
 | Storage | SQLite + FTS5 trigram | Zero extra infra; Chinese full-text search built-in |
-| Channels | aiogram 3.x / discord.py | Native async IM adapters |
+| Channels | aiogram 3.x / discord.py / httpx (Feishu) | Native async IM adapters |
 | Observability | Self-implemented + OTel bridge | Lightweight; no heavy SDK required |
 | Dashboard | Gradio | Minimal frontend code |
 | Tests | pytest + behavioral fingerprints | Behavior-path assertions, not text matching |
